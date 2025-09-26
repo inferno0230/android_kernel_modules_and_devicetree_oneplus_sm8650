@@ -1308,6 +1308,7 @@ static irqreturn_t syna_dev_isr(int irq, void *data)
 		goto exit;
 
 	tcm->isr_pid = current->pid;
+
 #ifdef HAS_SYSFS_INTERFACE
 	if (tcm->is_attn_redirecting) {
 		syna_cdev_redirect_attn(tcm);

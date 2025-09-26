@@ -970,6 +970,7 @@
 &dsi_panel_AA545_P_3_A0005_dsc_cmd {
 	/* HARDWARE CONFIG */
 	qcom,panel-supply-entries = <&oplus_dsi_panel_custom_pwr_supply>;
+	qcom,mdss-dsi-panel-controller = <&mdss_dsi0>;
 	qcom,platform-te-gpio = <&tlmm 86 0>;
 	qcom,platform-reset-gpio = <&tlmm 133 0>;
 	qcom,platform-panel-vout-gpio = <&tlmm 91 0>;
@@ -1054,7 +1055,6 @@
 
 	/* ofp config */
 	oplus,ofp-fp-type = <0x188>;
-	oplus,ofp-longrui-aod-config = <0x02>;
 	oplus,ofp-need-to-bypass-gamut;
 	oplus,ofp-need-to-wait-data-before-aod-on;
 };

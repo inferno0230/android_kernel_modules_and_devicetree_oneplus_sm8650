@@ -20,7 +20,7 @@
 
 			config {
 				pins = "gpio97";
-				drive-strength = <4>;  /* 4 mA */
+				drive-strength = <8>;  /* 8 mA */
 				bias-disable;
 			};
 		};

@@ -1176,6 +1176,11 @@ static int _sde_connector_update_dirty_properties(
 		case CONNECTOR_PROP_HDR_METADATA:
 			_sde_connector_update_hdr_metadata(c_conn, c_state);
 			break;
+		case CONNECTOR_PROP_BRIGHTNESS:
+			b_lvl = sde_connector_get_property(connector->state,
+						CONNECTOR_PROP_BRIGHTNESS);
+			backlight_device_set_brightness(c_conn->bl_device, b_lvl);
+			break;
 #ifdef OPLUS_FEATURE_DISPLAY
 		case CONNECTOR_PROP_SYNC_BACKLIGHT_LEVEL:
 			if (c_conn) {
@@ -1188,11 +1193,6 @@ static int _sde_connector_update_dirty_properties(
 			}
 			break;
 #endif /* OPLUS_FEATURE_DISPLAY */
-		case CONNECTOR_PROP_BRIGHTNESS:
-			b_lvl = sde_connector_get_property(connector->state,
-						CONNECTOR_PROP_BRIGHTNESS);
-			backlight_device_set_brightness(c_conn->bl_device, b_lvl);
-			break;
 		default:
 			/* nothing to do for most properties */
 			break;
@@ -1288,6 +1288,8 @@ int sde_connector_prepare_commit(struct drm_connector *connector)
 	struct sde_connector *c_conn;
 	struct sde_connector_state *c_state;
 	struct msm_display_conn_params params;
+	struct drm_encoder *drm_enc;
+	struct dsi_display *display;
 	int rc;
 
 	if (!connector) {
@@ -1297,6 +1299,7 @@ int sde_connector_prepare_commit(struct drm_connector *connector)
 
 	c_conn = to_sde_connector(connector);
 	c_state = to_sde_connector_state(connector->state);
+	drm_enc = c_conn->encoder;
 	if (!c_conn->display) {
 		SDE_ERROR("invalid connector display\n");
 		return -EINVAL;
@@ -1310,6 +1313,40 @@ int sde_connector_prepare_commit(struct drm_connector *connector)
 	if (c_conn->qsync_updated) {
 		params.qsync_mode = c_conn->qsync_mode;
 		params.qsync_update = true;
+	}
+
+	display = (struct dsi_display *)c_conn->display;
+
+	if (msm_is_mode_seamless_vrr(&c_state->msm_mode)) {
+		rc = sde_encoder_update_periph_flush(drm_enc);
+
+/* Send the needed fps switch command based on frame rate changes
+ For example:
+*/
+		if (c_state->mode_info.frame_rate == 120)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_120);
+
+		if (c_state->mode_info.frame_rate == 90)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_90);
+
+		if(c_state->mode_info.frame_rate == 60)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_60);
+
+		if(c_state->mode_info.frame_rate == 50)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_50);
+
+		if(c_state->mode_info.frame_rate == 48)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_48);
+
+		if(c_state->mode_info.frame_rate == 30)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_30);
+
+		if(c_state->mode_info.frame_rate == 144)
+			params.cmd_bit_mask = BIT(DSI_CMD_SET_FPS_SWITCH_144);
+
+		if (!rc)
+			params.peripheral_flush = true;
+		SDE_EVT32(params.peripheral_flush, params.cmd_bit_mask);
 	}
 
 	rc = c_conn->ops.prepare_commit(c_conn->display, &params);
@@ -1389,7 +1426,7 @@ void sde_connector_helper_bridge_enable(struct drm_connector *connector)
 	 * So delay backlight update to these panels until the
 	 * first frame commit is received from the HW.
 	 */
-	if (!display->poms_pending && display->panel->bl_config.bl_update ==
+	if (display->panel->bl_config.bl_update ==
 				BL_UPDATE_DELAY_UNTIL_FIRST_FRAME)
 		sde_encoder_wait_for_event(c_conn->encoder,
 				MSM_ENC_TX_COMPLETE);
@@ -2618,7 +2655,7 @@ static ssize_t _sde_debugfs_conn_cmd_tx_write(struct file *file,
 
 	mutex_lock(&c_conn->lock);
 	rc = c_conn->ops.cmd_transfer(&c_conn->base, c_conn->display, buffer,
-			buf_size);
+			buf_size, false);
 	c_conn->last_cmd_tx_sts = !rc ? true : false;
 	mutex_unlock(&c_conn->lock);
 
@@ -2931,7 +2968,6 @@ static int sde_connector_fill_modes(struct drm_connector *connector,
 
 	mode_count = drm_helper_probe_single_connector_modes(connector,
 			max_width, max_height);
-
 
 #ifdef OPLUS_FEATURE_DISPLAY
 	if (connector->connector_type == DRM_MODE_CONNECTOR_DSI) {
@@ -3672,7 +3708,7 @@ static int _sde_connector_install_properties(struct drm_device *dev,
 		dsi_display = (struct dsi_display *)(display);
 		if (dsi_display && dsi_display->panel) {
 			msm_property_install_range(&c_conn->property_info, "brightness",
-			0x0, 0, 0xFFFF, 0,
+			0x0, 0, dsi_display->panel->bl_config.brightness_max_level, 0,
 			CONNECTOR_PROP_BRIGHTNESS);
 		}
 	}

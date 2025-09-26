@@ -127,9 +127,6 @@ module_param_array(sleep_range_ms, ulong, NULL, 0664);
 static u64 last_core_boost_ts;
 static bool last_core_boost;
 static bool is_sbe_rescue;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-static atomic_t is_cb_ceiling_free;
-#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
 static bool freq_qos_check = true;
@@ -338,7 +335,7 @@ static int cb_config_store(const char *buf, const struct kernel_param *kp)
 
 	cb = &cb_stuff[v.clus];
 
-	if (v.limit_level < 0 || v.limit_level > cb->max_level)
+	if (v.limit_level < 0 || v.limit_level >= cb->freq_levels)
 		goto out;
 
 	if (v.down_speed < 0 || v.down_speed > cb->freq_levels)
@@ -505,32 +502,6 @@ void cb_ceiling_free_enable(bool rescue_enable)
 	}
 }
 EXPORT_SYMBOL(cb_ceiling_free_enable);
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-void cb_ceiling_free(bool ceiling_free_enable)
-{
-	if (!enable)
-		return;
-
-	if (atomic_read(&is_cb_ceiling_free) == ceiling_free_enable)
-		return;
-
-	atomic_set(&is_cb_ceiling_free, ceiling_free_enable);
-
-	for (int i = 0; i < NR_CLUS_MAX; ++i) {
-		struct cpufreq_bouncing *cb = &cb_stuff[i];
-		cb = cb_get(cb->first_cpu);
-		if (!cb)
-			continue;
-
-		if (ceiling_free_enable)
-			cb_reset_qos(i);
-		else if (likely(cb_qos_kw))
-			kthread_queue_work(cb_qos_kw, &cb->qos_work);
-	}
-}
-EXPORT_SYMBOL(cb_ceiling_free);
-#endif
 
 static inline bool clus_isolated(struct cpufreq_policy *pol)
 {
@@ -799,11 +770,7 @@ static void cb_do_boundary_change_work(struct kthread_work *qos_work)
 		pr_info("processing work cpu %d min %u max %u target %u req max %u\n",
 			cb->first_cpu, pol->min, pol->max, target, cb->qos_req.pnode.prio);
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-	if (is_sbe_rescue || atomic_read(&is_cb_ceiling_free))
-#else
 	if (is_sbe_rescue)
-#endif
 		target = FREQ_QOS_MAX_DEFAULT_VALUE;
 
 #ifdef CONFIG_OPLUS_UAG_SOFT_LIMIT

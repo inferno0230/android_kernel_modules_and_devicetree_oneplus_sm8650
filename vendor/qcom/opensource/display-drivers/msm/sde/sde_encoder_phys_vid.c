@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -12,10 +12,6 @@
 #include "dsi_display.h"
 #include "sde_trace.h"
 #include <drm/drm_fixed.h>
-
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-#include "../oplus/oplus_onscreenfingerprint.h"
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
 
 #define SDE_DEBUG_VIDENC(e, fmt, ...) SDE_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -238,7 +234,7 @@ static u32 programmable_fetch_get_num_lines(
 	if (start_of_frame_lines >= needed_prefill_lines) {
 		SDE_DEBUG_VIDENC(vid_enc,
 				"prog fetch always enabled case\n");
-		actual_vfp_lines = (test_bit(SDE_FEATURE_DELAY_PRG_FETCH, m->features)) ? 2 : 1;
+		actual_vfp_lines = (test_bit(SDE_FEATURE_DELAY_PRG_FETCH, m->features)) ? 25 : 1;
 	} else if (v_front_porch < needed_vfp_lines) {
 		/* Warn fetch needed, but not enough porch in panel config */
 		pr_warn_once
@@ -585,14 +581,6 @@ not_flushed:
 
 	/* Signal any waiting atomic commit thread */
 	wake_up_all(&phys_enc->pending_kickoff_wq);
-
-#ifdef OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT
-	if (oplus_ofp_is_supported()) {
-		oplus_ofp_panel_hbm_status_update(phys_enc);
-		oplus_ofp_notify_uiready(phys_enc);
-	}
-#endif /* OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT */
-
 	SDE_ATRACE_END("vblank_irq");
 }
 
@@ -1053,8 +1041,6 @@ static int sde_encoder_phys_vid_prepare_for_kickoff(
 	}
 	vid_enc = to_sde_encoder_phys_vid(phys_enc);
 
-	phys_enc->kickoff_timeout_ms =
-			sde_encoder_helper_get_kickoff_timeout_ms(phys_enc->parent);
 	ctl = phys_enc->hw_ctl;
 	if (!ctl->ops.wait_reset_status)
 		return 0;
@@ -1246,7 +1232,7 @@ static int sde_encoder_phys_vid_poll_for_active_region(struct sde_encoder_phys *
 		usleep_range(poll_time_us, poll_time_us + 5);
 		line_cnt = phys_enc->hw_intf->ops.get_line_count(phys_enc->hw_intf);
 		trial++;
-	} while ((trial < MAX_POLL_CNT) && (line_cnt < v_inactive));
+	} while ((trial < MAX_POLL_CNT) || (line_cnt < v_inactive));
 
 	return (trial >= MAX_POLL_CNT) ? -ETIMEDOUT : 0;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -1937,10 +1937,17 @@ static int _sde_encoder_update_rsc_client(
 void sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable)
 {
 	struct sde_encoder_virt *sde_enc;
+	struct sde_kms *sde_kms = NULL;
 	int i;
 
 	if (!drm_enc) {
 		SDE_ERROR("invalid encoder\n");
+		return;
+	}
+
+	sde_kms = sde_encoder_get_kms(drm_enc);
+	if (!sde_kms) {
+		SDE_ERROR("invalid kms\n");
 		return;
 	}
 
@@ -1956,7 +1963,7 @@ void sde_encoder_irq_control(struct drm_encoder *drm_enc, bool enable)
 		if (phys && phys->ops.dynamic_irq_control)
 			phys->ops.dynamic_irq_control(phys, enable);
 	}
-	sde_kms_cpu_vote_for_irq(sde_encoder_get_kms(drm_enc), enable);
+	sde_kms_cpu_vote_for_irq(sde_kms, enable);
 
 }
 
@@ -3761,31 +3768,6 @@ void sde_encoder_virt_reset(struct drm_encoder *drm_enc)
 	sde_rm_release(&sde_kms->rm, drm_enc, false);
 }
 
-static void sde_encoder_wait_for_vsync_event_complete(struct sde_encoder_virt *sde_enc)
-{
-	u32 timeout_ms = DEFAULT_KICKOFF_TIMEOUT_MS;
-	int i, ret;
-
-	if (sde_enc->cur_master)
-		timeout_ms = sde_enc->cur_master->kickoff_timeout_ms;
-
-	ret = wait_event_timeout(sde_enc->vsync_event_wq,
-			!sde_enc->vblank_enabled,
-			msecs_to_jiffies(timeout_ms));
-	SDE_EVT32(timeout_ms, ret);
-
-	if (!ret) {
-		SDE_ERROR("vsync event complete timed out %d\n", ret);
-		SDE_EVT32(ret, SDE_EVTLOG_ERROR);
-		for (i = 0; i < sde_enc->num_phys_encs; i++) {
-			struct sde_encoder_phys *phys = sde_enc->phys_encs[i];
-
-			if (phys && phys->ops.control_vblank_irq)
-				phys->ops.control_vblank_irq(phys, false);
-		}
-	}
-}
-
 static void _sde_encoder_helper_virt_disable(struct drm_encoder *drm_enc)
 {
 	int i;
@@ -3896,14 +3878,6 @@ static void sde_encoder_virt_disable(struct drm_encoder *drm_enc)
 	}
 
 	/*
-	 * wait for any pending vsync timestamp event to sf
-	 * to ensure vbalnk irq is disabled.
-	 */
-	if (sde_enc->vblank_enabled &&
-			!msm_is_mode_seamless_poms(&c_state->msm_mode))
-		sde_encoder_wait_for_vsync_event_complete(sde_enc);
-
-	/*
 	 * disable dce after the transfer is complete (for command mode)
 	 * and after physical encoder is disabled, to make sure timing
 	 * engine is already disabled (for video mode).
@@ -3943,6 +3917,7 @@ void sde_encoder_helper_phys_disable(struct sde_encoder_phys *phys_enc,
 	struct sde_ctl_flush_cfg cfg;
 	struct sde_hw_dsc *hw_dsc = NULL;
 	int i;
+	bool is_regdma_blocking = false, is_vid_mode = false;
 
 	ctl->ops.reset(ctl);
 	sde_encoder_helper_reset_mixers(phys_enc, NULL);
@@ -4019,6 +3994,12 @@ void sde_encoder_helper_phys_disable(struct sde_encoder_phys *phys_enc,
 	_trigger_encoder_hw_fences_override(phys_enc->sde_kms, ctl);
 
 	sde_crtc_disable_cp_features(sde_enc->base.crtc);
+
+	if (sde_encoder_check_curr_mode(&sde_enc->base, MSM_DISPLAY_VIDEO_MODE))
+		is_vid_mode = true;
+	is_regdma_blocking = (is_vid_mode ||
+			_sde_encoder_is_autorefresh_enabled(sde_enc));
+	ctl->ops.reg_dma_flush(ctl, is_regdma_blocking);
 	ctl->ops.get_pending_flush(ctl, &cfg);
 	SDE_EVT32(DRMID(phys_enc->parent), cfg.pending_flush_mask);
 	ctl->ops.trigger_flush(ctl);
@@ -4255,9 +4236,6 @@ void sde_encoder_register_vblank_callback(struct drm_encoder *drm_enc,
 			phys->ops.control_vblank_irq(phys, enable);
 	}
 	sde_enc->vblank_enabled = enable;
-
-	if (!enable)
-		wake_up_all(&sde_enc->vsync_event_wq);
 }
 
 void sde_encoder_register_frame_event_callback(struct drm_encoder *drm_enc,
@@ -6072,6 +6050,7 @@ u32 sde_encoder_helper_get_kickoff_timeout_ms(struct drm_encoder *drm_enc)
 	struct drm_encoder *src_enc = drm_enc;
 	struct sde_encoder_virt *sde_enc;
 	struct sde_kms *sde_kms;
+	u32 qsync_mode = 0, qsync_min_fps = 0;
 	u32 fps;
 
 	if (!drm_enc) {
@@ -6094,6 +6073,13 @@ u32 sde_encoder_helper_get_kickoff_timeout_ms(struct drm_encoder *drm_enc)
 
 	sde_enc = to_sde_encoder_virt(src_enc);
 	fps = sde_enc->mode_info.frame_rate;
+
+	if (sde_enc->cur_master)
+		qsync_mode = sde_connector_get_qsync_mode(sde_enc->cur_master->connector);
+
+	qsync_min_fps = sde_enc->mode_info.qsync_min_fps;
+	if (qsync_mode && qsync_min_fps)
+		fps = min(fps, qsync_min_fps);
 
 	if (!fps || fps >= DEFAULT_TIMEOUT_FPS_THRESHOLD)
 		return DEFAULT_KICKOFF_TIMEOUT_MS;
@@ -6924,7 +6910,6 @@ struct drm_encoder *sde_encoder_init(struct drm_device *dev, struct msm_display_
 		sde_enc->frame_trigger_mode = FRAME_DONE_WAIT_POSTED_START;
 
 	mutex_init(&sde_enc->rc_lock);
-	init_waitqueue_head(&sde_enc->vsync_event_wq);
 	kthread_init_delayed_work(&sde_enc->delayed_off_work,
 			sde_encoder_off_work);
 	sde_enc->vblank_enabled = false;

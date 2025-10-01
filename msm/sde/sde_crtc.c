@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2025 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -3005,14 +3005,16 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 		struct drm_crtc_state *cstate)
 {
 	struct drm_encoder *encoder;
+	struct sde_crtc *sde_crtc;
 
 	if (!crtc || !crtc->dev || !cstate) {
 		SDE_ERROR("invalid crtc\n");
 		return INTF_MODE_NONE;
 	}
 
+	sde_crtc = to_sde_crtc(crtc);
 	drm_for_each_encoder_mask(encoder, crtc->dev,
-			cstate->encoder_mask) {
+			sde_crtc->cached_encoder_mask) {
 		/* continue if copy encoder is encountered */
 		if (sde_crtc_state_in_clone_mode(encoder, cstate))
 			continue;
@@ -5038,6 +5040,8 @@ static int _sde_crtc_vblank_enable(
 {
 	struct drm_crtc *crtc;
 	struct drm_encoder *enc;
+	enum sde_intf_mode intf_mode;
+	bool wb_intf_mode = false;
 
 	if (!sde_crtc) {
 		SDE_ERROR("invalid crtc\n");
@@ -5048,6 +5052,9 @@ static int _sde_crtc_vblank_enable(
 	SDE_EVT32(DRMID(crtc), enable, sde_crtc->enabled,
 			crtc->state->encoder_mask,
 			sde_crtc->cached_encoder_mask);
+
+	intf_mode = sde_crtc_get_intf_mode(crtc, crtc->state);
+	wb_intf_mode = ((intf_mode == INTF_MODE_WB_BLOCK) || (intf_mode == INTF_MODE_WB_LINE));
 
 	if (enable) {
 		int ret;
@@ -5061,7 +5068,7 @@ static int _sde_crtc_vblank_enable(
 
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc))
+			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, sde_crtc_vblank_cb, (void *)crtc);
@@ -5070,7 +5077,7 @@ static int _sde_crtc_vblank_enable(
 	} else {
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc))
+			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, NULL, NULL);
@@ -5085,12 +5092,20 @@ static int _sde_crtc_vblank_enable(
 
 static void _sde_crtc_reserve_resource(struct drm_crtc *crtc, struct drm_connector *conn)
 {
+	struct sde_kms *kms;
+	struct drm_encoder *encoder;
 	u32 min_transfer_time = 0, lm_count = 1;
 	u64 mode_clock_hz = 0, updated_fps = 0, topology_id;
-	struct drm_encoder *encoder;
+	u32 inf_factor = 105, lm_width, num_bubbles = 0;
 
 	if (!crtc || !conn)
 		return;
+
+	kms = _sde_crtc_get_kms(crtc);
+	if (!kms || !kms->catalog) {
+		SDE_ERROR("invalid kms\n");
+		return;
+	}
 
 	encoder = conn->state->best_encoder;
 	if (!sde_encoder_is_built_in_display(encoder))
@@ -5108,17 +5123,31 @@ static void _sde_crtc_reserve_resource(struct drm_crtc *crtc, struct drm_connect
 		updated_fps = drm_mode_vrefresh(&crtc->mode);
 
 	topology_id = sde_connector_get_topology_name(conn);
-	if (TOPOLOGY_DUALPIPE_MODE(topology_id))
+	if (TOPOLOGY_DUALPIPE_MODE(topology_id)) {
 		lm_count = 2;
-	else if (TOPOLOGY_QUADPIPE_MODE(topology_id))
+		if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_A00))
+			num_bubbles = 40;
+	} else if (TOPOLOGY_QUADPIPE_MODE(topology_id)) {
 		lm_count = 4;
+		if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_A00))
+			num_bubbles = 56;
+	}
+
+	if (SDE_HW_MAJOR(kms->catalog->hw_rev) == SDE_HW_MAJOR(SDE_HW_VER_900)
+			&& lm_count > 1)
+		num_bubbles = 30;
+
+	lm_width = (crtc->mode.hdisplay) / lm_count;
+	num_bubbles = mult_frac(num_bubbles, 100, lm_width);
+	inf_factor = max((100 + num_bubbles), inf_factor);
 
 	/* mode clock = [(h * v * fps * 1.05) / (num_lm)] */
-	mode_clock_hz = mult_frac(crtc->mode.htotal * crtc->mode.vtotal * updated_fps, 105, 100);
+	mode_clock_hz = mult_frac(crtc->mode.htotal * crtc->mode.vtotal * updated_fps,
+				inf_factor, 100);
 	mode_clock_hz = div_u64(mode_clock_hz, lm_count);
-	SDE_DEBUG("[%s] h=%d v=%d fps=%d lm=%d mode_clk=%u\n",
+	SDE_DEBUG("[%s] h=%d v=%d fps=%d lm=%d mode_clk=%u inf_factor=%u\n",
 			crtc->mode.name, crtc->mode.htotal, crtc->mode.vtotal,
-			updated_fps, lm_count, mode_clock_hz);
+			updated_fps, lm_count, mode_clock_hz, inf_factor);
 
 	sde_core_perf_crtc_reserve_res(crtc, mode_clock_hz);
 }

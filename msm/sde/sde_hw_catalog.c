@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -29,7 +29,7 @@
  * 64 based on software design. It should be increased if any of the
  * hardware block has more subblocks.
  */
-#define MAX_SDE_HW_BLK  64
+#define MAX_SDE_HW_BLK  128
 
 /* each entry will have register address and bit offset in that register */
 #define MAX_BIT_OFFSET 2
@@ -2509,6 +2509,7 @@ static int sde_intf_parse_dt(struct device_node *np,
 			set_bit(SDE_INTF_TE_DEASSERT_DETECT, &intf->features);
 			set_bit(SDE_INTF_VSYNC_TS_SRC_EN, &intf->features);
 			set_bit(SDE_INTF_TE_LEVEL_TRIGGER, &intf->features);
+			set_bit(SDE_INTF_PERIPHERAL_FLUSH, &intf->features);
 		}
 	}
 

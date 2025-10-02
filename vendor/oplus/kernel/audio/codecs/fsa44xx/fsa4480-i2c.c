@@ -103,7 +103,6 @@ struct fsa4480_priv {
 	/* add end for DP */
 
 #ifdef OPLUS_ARCH_EXTENDS
-	/* 2024/06/17, supporting type-c headphone detect bypass */
 	bool hp_bypass;
 #endif /*OPLUS_ARCH_EXTENDS*/
 
@@ -113,7 +112,6 @@ struct fsa4480_priv {
 };
 
 #ifdef OPLUS_ARCH_EXTENDS
-/* 2024/06/17, supporting type-c headphone detect bypass */
 int (*ptypec_ext_eint_handler)(bool plug_flag) = NULL;
 
 int typec_ext_eint_handler(bool plug_flag)
@@ -391,7 +389,6 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 
 		}
 #ifdef OPLUS_ARCH_EXTENDS
-		/* 2024/06/17, supporting type-c headphone detect bypass */
 		if (fsa_priv->hp_bypass) {
 			typec_ext_eint_handler(true);
 		} else {
@@ -407,13 +404,11 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 				dev_info(dev, "%s: after hs_det_pin state = %d.\n", __func__, state);
 			}
 #ifdef OPLUS_ARCH_EXTENDS
-		/* 2024/06/17, supporting type-c headphone detect bypass */
 		}
 #endif /*OPLUS_ARCH_EXTENDS*/
 	} else {
 		pr_info("plugout regulator_get_voltage(%d)\n", regulator_get_voltage(vio28_reg));
 #ifdef OPLUS_ARCH_EXTENDS
-		/* 2024/06/17, supporting type-c headphone detect bypass */
 		if (fsa_priv->hp_bypass) {
 			typec_ext_eint_handler(false);
 		} else {
@@ -427,7 +422,6 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 				dev_info(dev, "%s: after hs_det_pin state = %d.\n", __func__, state);
 			}
 #ifdef OPLUS_ARCH_EXTENDS
-		/* 2024/06/17, supporting type-c headphone detect bypass */
 		}
 #endif /*OPLUS_ARCH_EXTENDS*/
 		if ((fsa_priv->vendor == DIO4480) || (fsa_priv->vendor == DIO4483)) {
@@ -651,7 +645,6 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
     int state = 0;
     int sense_to_ground = 0;
 #ifdef OPLUS_ARCH_EXTENDS
-    /* 2024/06/17, supporting type-c headphone detect bypass */
     int hp_bypass = 0;
 #endif
 
@@ -683,7 +676,6 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
 	}
 
 #ifdef OPLUS_ARCH_EXTENDS
-	/* 2024/06/17, supporting type-c headphone detect bypass */
 	ret = of_property_read_u32(dNode,
 				"fsa4480,hp-bypass", &hp_bypass);
 	if (ret) {

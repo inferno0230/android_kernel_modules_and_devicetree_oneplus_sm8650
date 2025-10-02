@@ -16,7 +16,6 @@
 #include <linux/reboot.h>
 #include <linux/notifier.h>
 #include <linux/fb.h>
-#include <linux/ktime.h>
 #ifndef CONFIG_DISABLE_OPLUS_FUNCTION
 #include <soc/oplus/system/boot_mode.h>
 #include <soc/oplus/system/oplus_project.h>
@@ -404,7 +403,6 @@ struct oplus_chg_comm {
 	bool ufcs_charging;
 	bool pps_online;
 	bool pps_charging;
-	bool pps_online_keep;
 
 	bool unwakelock_chg;
 	bool chg_powersave;
@@ -432,11 +430,6 @@ struct oplus_chg_comm {
 
 	unsigned int nvid_support_flags;
 	int plc_status;
-
-	bool standard_charge_check;
-	long plugin_time;
-	bool fast_charging_done;
-	bool fastchg_check_switch;
 };
 
 typedef struct {
@@ -3013,7 +3006,7 @@ done:
 		    (!chip->vooc_charging || vooc_by_normalpath_chg) && mmi_chg &&
 		    !chip->ufcs_charging && !chip->pps_charging && !is_wls_fastchg_started(chip)) {
 			tmp = chip->batt_full_jiffies +
-			      (unsigned long)(180 * HZ);
+			      (unsigned long)(60 * HZ);
 			if (time_is_before_jiffies(tmp)) {
 				chg_err("pre set battery full\n");
 				oplus_comm_set_batt_full(chip, true);
@@ -4363,41 +4356,6 @@ static int oplus_comm_set_notify_flag(struct oplus_chg_comm *chip,
 	return rc;
 }
 
-#define NOTIFY_FAST_CHARGING_CHECK_TIME 50
-static void oplus_comm_battery_fast_charging_check(struct oplus_chg_comm *chip)
-{
-	struct timespec time_now = oplus_current_kernel_time();
-	bool fast_check = true;
-	int mmi_chg = oplus_comm_get_mmi_state(chip);
-	static bool pre_fast_check = false;
-
-	if (chip->fast_charging_done || !chip->fastchg_check_switch || !chip->wired_online || !mmi_chg) {
-		chg_debug("fast_charging_done %d, fastchg_check_switch %d, wired_online %d, mmi_chg %d",
-			chip->fast_charging_done, chip->fastchg_check_switch, chip->wired_online, mmi_chg);
-		chip->standard_charge_check = true;
-		return;
-	}
-
-	fast_check = chip->vooc_charging || chip->vooc_online || chip->vooc_online_keep ||
-		     chip->ufcs_charging || chip->ufcs_online ||
-		     chip->pps_charging || chip->pps_online || chip->pps_online_keep;
-
-	if (pre_fast_check != fast_check) {
-		if (pre_fast_check) {
-			chip->plugin_time = time_now.tv_sec;
-		}
-		pre_fast_check = fast_check;
-	}
-
-	if (!fast_check && time_now.tv_sec - chip->plugin_time > NOTIFY_FAST_CHARGING_CHECK_TIME) {
-		chip->standard_charge_check = false;
-		chip->fast_charging_done = true;
-		chg_info("time_now = %ld, plugin_time = %ld \n", time_now.tv_sec, chip->plugin_time);
-	} else {
-		chip->standard_charge_check = true;
-	}
-}
-
 static void oplus_comm_battery_notify_check(struct oplus_chg_comm *chip)
 {
 	unsigned int notify_code = 0;
@@ -4462,12 +4420,6 @@ static void oplus_comm_battery_notify_check(struct oplus_chg_comm *chip)
 			notify_code |= data.intval;
 	}
 
-	if (chip->wired_online) {
-		oplus_comm_battery_fast_charging_check(chip);
-		if (!chip->standard_charge_check)
-			notify_code |= BIT(NOTIFY_FASTCHG_CHECK_FAIL);
-	}
-
 	oplus_comm_set_notify_code(chip, notify_code);
 }
 
@@ -4497,8 +4449,6 @@ static void oplus_comm_battery_notify_flag_check(struct oplus_chg_comm *chip)
 		notify_flag = NOTIFY_BAT_FULL_PRE_LOW_TEMP;
 	} else if (chip->notify_code & (1 << NOTIFY_BAT_FULL)) {
 		notify_flag = NOTIFY_BAT_FULL;
-	} else if (chip->notify_code & (1 << NOTIFY_FASTCHG_CHECK_FAIL)) {
-		notify_flag = NOTIFY_FASTCHG_CHECK_FAIL;
 	} else {
 		notify_flag = 0;
 	}
@@ -5342,14 +5292,9 @@ static void oplus_comm_pps_subs_callback(struct mms_subscribe *subs,
 			chip->pps_charging = !!data.intval;
 			break;
 		case PPS_ITEM_ONLINE:
-			oplus_mms_get_item_data(chip->pps_topic, id, &data,
+			oplus_mms_get_item_data(chip->ufcs_topic, id, &data,
 						false);
 			chip->pps_online = !!data.intval;
-			break;
-		case PPS_ITEM_ONLINE_KEEP:
-			oplus_mms_get_item_data(chip->pps_topic, id, &data,
-						false);
-			chip->pps_online_keep = !!data.intval;
 			break;
 		default:
 			break;
@@ -5608,7 +5553,6 @@ static void oplus_comm_plugin_work(struct work_struct *work)
 	struct ui_soc_decimal *soc_decimal = &chip->soc_decimal;
 	union mms_msg_data data = { 0 };
 	int fv_mv = 0;
-	struct timespec ts_now;
 
 	oplus_mms_get_item_data(chip->wired_topic, WIRED_ITEM_ONLINE, &data,
 				false);
@@ -5629,9 +5573,6 @@ static void oplus_comm_plugin_work(struct work_struct *work)
 		oplus_comm_fginfo_reset(chip);
 		noplug_temperature = chip->main_batt_temp;
 		schedule_work(&chip->noplug_batt_volt_work);
-		ts_now = oplus_current_kernel_time();
-		chip->plugin_time = ts_now.tv_sec;
-		chip->fast_charging_done = false;
 		oplus_comm_battery_notify_check(chip);
 		oplus_comm_battery_notify_flag_check(chip);
 		chip->fv_over = false;
@@ -5673,8 +5614,6 @@ static void oplus_comm_plugin_work(struct work_struct *work)
 		cancel_work_sync(&chip->noplug_batt_volt_work);
 		chip->fg_soft_reset_done = true;
 		chip->ffc_charging = false;
-		chip->standard_charge_check = true;
-		chip->fast_charging_done = false;
 		chip->sw_full = false;
 		chip->hw_full_by_sw = false;
 		chip->cv_cutoff_volt_curr = 0;
@@ -9100,7 +9039,6 @@ static int oplus_comm_driver_probe(struct platform_device *pdev)
 	comm_dev->uisoc_down_in_full = false;
 	comm_dev->rechg_now = false;
 	comm_dev->ui_soc = 50; /* fix the issue of power off by ui_soc is 0 */
-	comm_dev->fastchg_check_switch = false;
 	mutex_init(&comm_dev->slow_chg_mutex);
 	mutex_init(&comm_dev->sale_mode_mutex);
 	comm_dev->low_temp_check_jiffies = jiffies;
@@ -9444,36 +9382,6 @@ int oplus_comm_get_wired_ffc_step_max(struct oplus_mms *topic)
 	spec = &chip->spec;
 
 	return spec->wired_ffc_step_max;
-}
-
-int oplus_comm_get_fastchg_check_switch(struct oplus_mms *topic)
-{
-	struct oplus_chg_comm *chip;
-
-	if (topic == NULL) {
-		chg_err("topic is NULL\n");
-		return -ENODEV;
-	}
-	chip = oplus_mms_get_drvdata(topic);
-
-	return chip->fastchg_check_switch;
-}
-
-void oplus_comm_set_fastchg_check_switch(struct oplus_mms *topic, bool val)
-{
-	struct oplus_chg_comm *chip;
-	struct timespec ts_now;
-
-	if (topic == NULL) {
-		chg_err("topic is NULL\n");
-		return;
-	}
-	chip = oplus_mms_get_drvdata(topic);
-	if (val) {
-		ts_now = oplus_current_kernel_time();
-		chip->plugin_time = ts_now.tv_sec;
-	}
-	chip->fastchg_check_switch = val;
 }
 
 int oplus_comm_get_wired_aging_ffc_version(struct oplus_mms *topic)

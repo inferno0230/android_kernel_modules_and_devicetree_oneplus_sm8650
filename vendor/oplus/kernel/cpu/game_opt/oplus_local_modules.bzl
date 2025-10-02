@@ -8,14 +8,7 @@ def define_oplus_local_modules():
         name = "oplus_bsp_game_opt",
         srcs = native.glob([
             "**/*.h",
-            "cpu_load.c",
-            "cpufreq_limits.c",
-            "debug.c",
-            "early_detect.c",
-            "fake_cpufreq.c",
-            "game_ctrl.c",
-            "rt_info.c",
-            "task_util.c",
+            "**/*.c",
         ]),
         includes = ["."],
         copts = select({

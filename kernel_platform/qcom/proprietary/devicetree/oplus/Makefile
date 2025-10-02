@@ -19,7 +19,7 @@ OPLUS_PINEAPPLE_BOARDS += waffle-22825-pineapple-overlay.dtbo\
                           giulia-23851-pineapple-overlay.dtbo\
                           giulia-23867-pineapple-overlay-T0.dtbo\
                           giulia-23867-pineapple-overlay-T0-EU.dtbo\
-                          giulia-23867-pineapple-overlay.dtbo\
+                          giulia-23867-pineapple-overlay.dtbo
 
 dtb-y += $(OPLUS_PINEAPPLE_BOARDS) $(PINEAPPLE_BASE_DTB) $(PINEAPPLE_APQ_BASE_DTB)
 

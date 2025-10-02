@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -1437,7 +1437,6 @@ static int _sde_cp_crtc_cache_property_helper(struct drm_crtc *crtc,
 	return ret;
 }
 
-
 #ifdef OPLUS_FEATURE_DISPLAY
 struct sde_kms *get_kms_(struct drm_crtc *crtc)
 {
@@ -1891,8 +1890,6 @@ static void _sde_cp_crtc_commit_feature(struct sde_cp_node *prop_node,
 	hw_cfg.is_crtc_enabled = sde_crtc->enabled;
 
 	hw_cfg.num_ds_enabled = sde_crtc_state->num_ds_enabled;
-	hw_cfg.overfetch_lines_on_top = sde_crtc_state->user_roi_list.spr_roi[0].y1 -
-				sde_crtc_state->user_roi_list.roi[0].y1;
 
 	SDE_EVT32(prop_node->feature, hw_cfg.panel_width, hw_cfg.panel_height);
 
@@ -2218,7 +2215,7 @@ int sde_cp_crtc_check_properties(struct drm_crtc *crtc,
 	old_mode = &crtc->state->adjusted_mode;
 	new_mode = &state->adjusted_mode;
 	if ((old_mode->hdisplay != new_mode->hdisplay) ||
-	(old_mode->vdisplay != new_mode->vdisplay))
+		(old_mode->vdisplay != new_mode->vdisplay))
 		sde_cp_crtc_res_change(crtc);
 
 	mutex_lock(&sde_crtc->crtc_cp_lock);

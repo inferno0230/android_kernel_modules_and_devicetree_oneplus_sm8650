@@ -2663,14 +2663,16 @@ static void _sde_crtc_dest_scaler_setup(struct drm_crtc *crtc)
 			hw_ctl = sde_crtc->mixers[lm_idx].hw_ctl;
 			hw_ds  = sde_crtc->mixers[lm_idx].hw_ds;
 
-			/* Setup op mode - Dual/single */
+			/* Setup op mode */
 			if (cfg->flags & SDE_DRM_DESTSCALER_ENABLE)
 				op_mode |= BIT(hw_ds->idx - DS_0);
 
+			if (cstate->num_ds_enabled == CRTC_DUAL_MIXERS_ONLY)
+				op_mode |= SDE_DS_OP_MODE_DUAL;
+			else if (cstate->num_ds_enabled == CRTC_QUAD_MIXERS)
+				op_mode |= SDE_DS_OP_MODE_QUAD;
+
 			if (hw_ds->ops.setup_opmode) {
-				op_mode |= (cstate->num_ds_enabled ==
-					CRTC_DUAL_MIXERS_ONLY) ?
-					SDE_DS_OP_MODE_DUAL : 0;
 				hw_ds->ops.setup_opmode(hw_ds, op_mode);
 				SDE_EVT32_VERBOSE(DRMID(crtc), op_mode);
 			}
@@ -2693,31 +2695,6 @@ static void _sde_crtc_dest_scaler_setup(struct drm_crtc *crtc)
 				hw_ctl->ops.update_bitmask_mixer(
 						hw_ctl, hw_lm->idx, 1);
 		}
-	}
-}
-
-static void sde_crtc_disable_dest_scaler(struct drm_crtc *crtc)
-{
-	struct sde_crtc *sde_crtc;
-	struct sde_crtc_state *cstate;
-	struct sde_hw_mixer *hw_lm;
-	struct sde_hw_ctl *hw_ctl;
-	struct sde_hw_ds *hw_ds;
-	int lm_idx;
-
-	sde_crtc = to_sde_crtc(crtc);
-	cstate = to_sde_crtc_state(crtc->state);
-
-	for (lm_idx = 0; lm_idx < sde_crtc->num_mixers; lm_idx++) {
-		hw_lm  = sde_crtc->mixers[lm_idx].hw_lm;
-		hw_ctl = sde_crtc->mixers[lm_idx].hw_ctl;
-		hw_ds  = sde_crtc->mixers[lm_idx].hw_ds;
-		if (hw_ds && hw_ds->ops.disable_dest_scl)
-			hw_ds->ops.disable_dest_scl(hw_ds);
-
-		if (hw_lm && hw_ctl && hw_ctl->ops.update_bitmask_mixer)
-			hw_ctl->ops.update_bitmask_mixer(
-					hw_ctl, hw_lm->idx, 1);
 	}
 }
 
@@ -3003,16 +2980,14 @@ enum sde_intf_mode sde_crtc_get_intf_mode(struct drm_crtc *crtc,
 		struct drm_crtc_state *cstate)
 {
 	struct drm_encoder *encoder;
-	struct sde_crtc *sde_crtc;
 
 	if (!crtc || !crtc->dev || !cstate) {
 		SDE_ERROR("invalid crtc\n");
 		return INTF_MODE_NONE;
 	}
 
-	sde_crtc = to_sde_crtc(crtc);
 	drm_for_each_encoder_mask(encoder, crtc->dev,
-			sde_crtc->cached_encoder_mask) {
+			cstate->encoder_mask) {
 		/* continue if copy encoder is encountered */
 		if (sde_crtc_state_in_clone_mode(encoder, cstate))
 			continue;
@@ -5038,8 +5013,6 @@ static int _sde_crtc_vblank_enable(
 {
 	struct drm_crtc *crtc;
 	struct drm_encoder *enc;
-	enum sde_intf_mode intf_mode;
-	bool wb_intf_mode = false;
 
 	if (!sde_crtc) {
 		SDE_ERROR("invalid crtc\n");
@@ -5050,9 +5023,6 @@ static int _sde_crtc_vblank_enable(
 	SDE_EVT32(DRMID(crtc), enable, sde_crtc->enabled,
 			crtc->state->encoder_mask,
 			sde_crtc->cached_encoder_mask);
-
-	intf_mode = sde_crtc_get_intf_mode(crtc, crtc->state);
-	wb_intf_mode = ((intf_mode == INTF_MODE_WB_BLOCK) || (intf_mode == INTF_MODE_WB_LINE));
 
 	if (enable) {
 		int ret;
@@ -5066,7 +5036,7 @@ static int _sde_crtc_vblank_enable(
 
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
+			if (sde_encoder_in_clone_mode(enc))
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, sde_crtc_vblank_cb, (void *)crtc);
@@ -5075,7 +5045,7 @@ static int _sde_crtc_vblank_enable(
 	} else {
 		mutex_lock(&sde_crtc->crtc_lock);
 		drm_for_each_encoder_mask(enc, crtc->dev, sde_crtc->cached_encoder_mask) {
-			if (sde_encoder_in_clone_mode(enc) || wb_intf_mode)
+			if (sde_encoder_in_clone_mode(enc))
 				continue;
 
 			sde_encoder_register_vblank_callback(enc, NULL, NULL);
@@ -5457,10 +5427,6 @@ static void sde_crtc_disable(struct drm_crtc *crtc)
 
 	/* Try to disable uidle */
 	sde_core_perf_crtc_update_uidle(crtc, false);
-
-	for (i = 0; i < SDE_SYS_CACHE_MAX; i++)
-		sde_crtc->new_perf.llcc_active[i] = 0;
-	sde_core_perf_crtc_update_llcc(crtc);
 
 	if (atomic_read(&sde_crtc->frame_pending)) {
 		SDE_ERROR("crtc%d frame_pending%d\n", crtc->base.id,
@@ -6173,8 +6139,9 @@ static int _sde_crtc_check_zpos(struct drm_crtc_state *state,
 			SDE_ERROR("> %d plane stages assigned\n",
 					SDE_STAGE_MAX - SDE_STAGE_0);
 			return -EINVAL;
-		} else if (zpos_cnt == 2) {
-			SDE_ERROR("> 2 planes @ stage %d\n", z_pos);
+		} else if (sde_crtc->num_mixers && (zpos_cnt == 2*((sde_crtc->num_mixers + 1)/2))) {
+			SDE_ERROR("> %d planes @ stage %d\n", 2*((sde_crtc->num_mixers + 1)/2),
+				z_pos);
 			return -EINVAL;
 		} else {
 			zpos_cnt++;
@@ -6266,7 +6233,7 @@ static int _sde_crtc_check_plane_layout(struct drm_crtc *crtc,
 			SDE_RM_TOPOLOGY_GROUP_QUADPIPE))
 		return 0;
 
-	mode = &crtc->state->adjusted_mode;
+	mode = &crtc_state->adjusted_mode;
 	sde_crtc_get_resolution(crtc, crtc_state, mode, &crtc_width, &crtc_height);
 
 	drm_atomic_crtc_state_for_each_plane(plane, crtc_state) {
@@ -8841,9 +8808,6 @@ static void sde_cp_crtc_apply_noise(struct drm_crtc *crtc,
 void sde_crtc_disable_cp_features(struct drm_crtc *crtc)
 {
 	sde_cp_disable_features(crtc);
-
-	if (!crtc->state->active)
-		sde_crtc_disable_dest_scaler(crtc);
 }
 
 void _sde_crtc_vm_release_notify(struct drm_crtc *crtc)

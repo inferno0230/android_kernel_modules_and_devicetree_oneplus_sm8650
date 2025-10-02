@@ -58,7 +58,6 @@
 #define SDE_HW_VER_900	SDE_HW_VER(9, 0, 0) /* kalama */
 #define SDE_HW_VER_A00	SDE_HW_VER(10, 0, 0) /* pineapple */
 #define SDE_HW_VER_A10	SDE_HW_VER(10, 1, 0) /* cliffs */
-#define SDE_HW_VER_A20	SDE_HW_VER(10, 2, 0) /* volcano */
 
 
 /* Avoid using below IS_XXX macros outside catalog, use feature bit instead */
@@ -92,7 +91,6 @@
 #define IS_KALAMA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_900)
 #define IS_PINEAPPLE_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A00)
 #define IS_CLIFFS_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A10)
-#define IS_VOLCANO_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A20)
 
 #define SDE_HW_BLK_NAME_LEN	16
 
@@ -104,6 +102,7 @@
 
 #define CRTC_SINGLE_MIXER_ONLY	1
 #define CRTC_DUAL_MIXERS_ONLY	2
+#define CRTC_QUAD_MIXERS	4
 #define MAX_MIXERS_PER_CRTC	4
 #define MAX_MIXERS_PER_LAYOUT	2
 #define MAX_LAYOUTS_PER_CRTC (MAX_MIXERS_PER_CRTC / MAX_MIXERS_PER_LAYOUT)
@@ -419,8 +418,6 @@ enum {
  * @SDE_DISP_SECONDARY_PREF   Layer mixer preferred for secondary display
  * @SDE_MIXER_COMBINED_ALPHA  Layer mixer bg and fg alpha in single register
  * @SDE_MIXER_NOISE_LAYER     Layer mixer supports noise layer
- * @SDE_MIXER_IS_VIRTUAL      Layer mixer which is removed but used for proper
- *                            Dedicated CWB allocation
  * @SDE_MIXER_MAX             maximum value
  */
 enum {
@@ -434,7 +431,6 @@ enum {
 	SDE_DISP_DCWB_PREF,
 	SDE_MIXER_COMBINED_ALPHA,
 	SDE_MIXER_NOISE_LAYER,
-	SDE_MIXER_IS_VIRTUAL,
 	SDE_MIXER_MAX
 };
 
@@ -648,6 +644,7 @@ enum {
  * @SDE_INTF_TE_DEASSERT_DETECT INTF block has TE Deassert detect support
  * @SDE_INTF_VSYNC_TS_SRC_EN    INTF block has VSYNC timestamp source selection support
  * @SDE_INTF_TE_LEVEL_TRIGGER   INTF block has TE Level trigger gating support
+ * @SDE_INTF_PERIPHERAL_FLUSH   INTF block has peripheral flush support
  * @SDE_INTF_MAX
  */
 enum {
@@ -668,6 +665,7 @@ enum {
 	SDE_INTF_TE_DEASSERT_DETECT,
 	SDE_INTF_VSYNC_TS_SRC_EN,
 	SDE_INTF_TE_LEVEL_TRIGGER,
+	SDE_INTF_PERIPHERAL_FLUSH,
 	SDE_INTF_MAX
 };
 
@@ -1902,7 +1900,7 @@ struct sde_perf_cfg {
  * @sspp_count          number of valid SSPP blocks available
  * @sspp                array of pointers to SSPP blocks
  * @mixer_count         number of valid LM blocks available
- * @virtual_mixers_mask bitmask of virtual mixers
+ * @mixer               array of pointers to LM blocks
  * @dspp_top            pointer to common DSPP_TOP block
  * @dspp_count          number of valid DSPP blocks available
  * @dspp                array of pointers to DSPP blocks
@@ -1960,8 +1958,7 @@ struct sde_perf_cfg {
  * @max_dsc_width       max dsc line width
  * @max_mixer_width     max layer mixer line width
  * @max_mixer_blendstages       max layer mixer blend stages (z orders)
- * @max_cwb             max number of cwb supported
- * @ddr_list_index      index of supported ddr type
+ * @max_cwb             max number of dcwb/cwb supported
  * @vbif_qos_nlvl       number of vbif QoS priority levels
  * @qos_target_time_ns  normalized qos target time for line-based qos
  * @macrotile_mode      UBWC parameter for macro tile channel distribution
@@ -2017,7 +2014,6 @@ struct sde_mdss_cfg {
 	struct sde_sspp_cfg sspp[MAX_BLOCKS];
 	u32 mixer_count;
 	struct sde_lm_cfg mixer[MAX_BLOCKS];
-	u32 virtual_mixers_mask;
 	struct sde_dspp_top_cfg dspp_top;
 	u32 dspp_count;
 	struct sde_dspp_cfg dspp[MAX_BLOCKS];
@@ -2113,7 +2109,6 @@ struct sde_mdss_cfg {
 
 	enum sde_ppb_size_option ppb_sz_program;
 	u32 ppb_buf_max_lines;
-	u32 ddr_list_index;
 };
 
 struct sde_mdss_hw_cfg_handler {

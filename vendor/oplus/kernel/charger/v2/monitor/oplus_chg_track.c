@@ -1050,7 +1050,6 @@ static struct flag_reason_table track_flag_reason_table[] = {
 	{ TRACK_NOTIFY_FLAG_I2C_ABNORMAL, "I2cAbnormal" },
 	{ TRACK_NOTIFY_FLAG_BOOST_BUCK_ERR, "BoostICAbnormal" },
 	{ TRACK_NOTIFY_FLAG_NTC_ABNORMAL, "NTCAbnormal" },
-	{ TRACK_NOTIFY_FLAG_IC_BURN, "IcBurn" },
 
 	{ TRACK_NOTIFY_FLAG_UFCS_ABNORMAL, "UfcsAbnormal" },
 	{ TRACK_NOTIFY_FLAG_COOLDOWN_ABNORMAL, "CoolDownAbnormal" },
@@ -1235,7 +1234,6 @@ static struct oplus_chg_track_chg_abnormal_reason chg_abnormal_reason_table[] = 
 	{ NOTIFY_BAT_OVER_VOL, "batt_over_vol", 0 },
 	{ NOTIFY_BAT_NOT_CONNECT, "batt_no_conn", 0 },
 	{ NOTIFY_BAT_FULL_THIRD_BATTERY, "batt_no_auth", 0 },
-	{ NOTIFY_FASTCHG_CHECK_FAIL, "non_standard_charger", 0 },
 };
 
 static struct oplus_chg_track_cool_down_stats cool_down_stats_table[] = {
@@ -5230,9 +5228,6 @@ oplus_chg_track_check_chg_abnormal(struct oplus_monitor *monitor,
 			NOTIFY_BAT_FULL_THIRD_BATTERY, track_status);
 	}
 
-	if (notify_code & (1 << NOTIFY_FASTCHG_CHECK_FAIL))
-		oplus_chg_track_get_chg_abnormal_reason_info(NOTIFY_FASTCHG_CHECK_FAIL, track_status);
-
 	chg_debug("track_notify_code:0x%x, chager_notify_code:0x%x, abnormal_reason[%s]\n",
 		notify_code, monitor->notify_code,
 		track_status->chg_abnormal_reason);
@@ -6053,8 +6048,7 @@ oplus_chg_track_wired_fastchg_exit_code(struct oplus_chg_track *track_chip)
 		if (!code || code == TRACK_CP_VOOCPHY_FULL ||
 		    code == TRACK_CP_VOOCPHY_BATT_TEMP_OVER ||
 		    code == TRACK_CP_VOOCPHY_USER_EXIT_FASTCHG ||
-		    code == TRACK_CP_VOOCPHY_SWITCH_TEMP_RANGE||
-		    code == TRACK_CP_VOOCPHY_IC_BURN)
+		    code == TRACK_CP_VOOCPHY_SWITCH_TEMP_RANGE)
 			ret = true;
 		else
 			ret = false;
@@ -7074,10 +7068,6 @@ static int oplus_chg_track_upload_ic_err_info(struct oplus_chg_track *track)
 	case OPLUS_IC_ERR_NTC:
 		track->ic_err_msg_load_trigger.flag_reason =
 			TRACK_NOTIFY_FLAG_NTC_ABNORMAL;
-		break;
-	case OPLUS_IC_ERR_BURN:
-		track->ic_err_msg_load_trigger.flag_reason =
-			TRACK_NOTIFY_FLAG_IC_BURN;
 		break;
 	case OPLUS_IC_ERR_UNKNOWN:
 	default:

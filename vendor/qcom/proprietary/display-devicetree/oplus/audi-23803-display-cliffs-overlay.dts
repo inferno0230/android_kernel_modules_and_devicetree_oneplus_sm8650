@@ -8,5 +8,5 @@
 / {
 	model = "Qualcomm Technologies, Inc. Cliffs MTP,audi";
 
-	oplus,project-id = <23803 23865 24211 24212 24801>;
+	oplus,project-id = <23803 23865>;
 };

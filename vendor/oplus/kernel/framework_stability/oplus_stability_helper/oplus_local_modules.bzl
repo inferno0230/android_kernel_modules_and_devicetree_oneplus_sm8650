@@ -8,10 +8,6 @@ def define_oplus_local_modules():
         name = "oplus_sys_stability_helper",
         srcs = native.glob([
             "oplus_stability_helper.c",
-            "frk_netlink.c",
-            "binder_watcher.c",
-            "thread_watcher.c",
-            "lowmem_watcher.c",
             "*.h",
         ]),
         includes = ["."],
@@ -21,5 +17,3 @@ def define_oplus_local_modules():
         name = "oplus_sys_stability_helper",
         module_list = ["oplus_sys_stability_helper"],
     )
-
-

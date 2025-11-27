@@ -20,7 +20,7 @@
 #include <linux/thread_info.h>
 #include <linux/hashtable.h>
 
-#include "common.h"
+#include "internal.h"
 #include "memstat.h"
 #include "proc-memstat.h"
 #include "sys-memstat.h"
@@ -333,10 +333,8 @@ long proc_memstat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct logger_reader *reader = file->private_data;
 	long ret = -EINVAL;
 
-	if (cmd < CMD_PROC_MS_MIN || cmd > CMD_PROC_MS_MAX) {
-		osvelte_err("cmd invalid.\n");
+	if (cmd < CMD_PROC_MS_MIN || cmd > CMD_PROC_MS_MAX)
 		return CMD_PROC_MS_INVALID;
-	}
 
 	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;

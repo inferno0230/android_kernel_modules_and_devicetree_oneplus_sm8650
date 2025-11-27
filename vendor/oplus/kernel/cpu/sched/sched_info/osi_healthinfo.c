@@ -20,6 +20,7 @@
 
 #include "osi_base.h"
 #include "../sched_assist/sa_common.h"
+#include "../sched_assist/sa_group.h"
 
 #define BUFFER_SIZE_S 256
 #define BUFFER_SIZE_M 512
@@ -235,17 +236,6 @@ static char *ohm_detect_env[MAX_OHMEVENT_PARAM] = { "OHMACTION=uevent", NULL };
 static bool ohm_action_ctrl;
 static char msg_buf[OH_MSG_LEN] = {0};
 
-#if IS_ENABLED(CONFIG_CGROUP_SCHED)
-static inline int get_task_cgroup_id(struct task_struct *task)
-{
-	struct cgroup_subsys_state *css = task_css(task, cpu_cgrp_id);
-
-	return css ? css->id : -1;
-}
-#else
-inline int get_task_cgroup_id(struct task_struct *task) { return 0; }
-#endif
-
 #if  IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
 // todo add ux type
 #endif
@@ -409,10 +399,8 @@ void ohm_schedstats_record(int sched_type, struct task_struct *task, u64 delta_m
 {
 	struct sched_stat_para *sched_stat = &sched_para[sched_type];
 	static DEFINE_RATELIMIT_STATE(ratelimit, 60*HZ, 1);
-	int grp_id;
 	unsigned long flags;
 
-	grp_id = get_task_cgroup_id(task);
 	spin_lock_irqsave(&sched_stat->lock, flags);
 	if (unlikely(!sched_stat->ctrl)) {
 		spin_unlock_irqrestore(&sched_stat->lock, flags);
@@ -421,7 +409,7 @@ void ohm_schedstats_record(int sched_type, struct task_struct *task, u64 delta_m
 	sched_stat->delta_ms = delta_ms;
 	ohm_sched_stat_record_common(sched_stat, &sched_stat->all, delta_ms);
 
-	if (SA_CGROUP_FOREGROUND == grp_id) {
+	if (fg_task(task)) {
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->fg, delta_ms);
 		if (unlikely(delta_ms >= sched_stat->high_thresh_ms)) {
 			if (sched_para[sched_type].logon  && __ratelimit(&ratelimit)) {
@@ -439,16 +427,16 @@ void ohm_schedstats_record(int sched_type, struct task_struct *task, u64 delta_m
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->ux, delta_ms);
 	}
 #endif
-	if (SA_CGROUP_TOP_APP == grp_id) {
+	if (ta_task(task)) {
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->top, delta_ms);
 	}
 	if (rt_task(task)) {
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->rt, delta_ms);
 	}
-	if (SA_CGROUP_FOREGROUND == grp_id) {
+	if (bg_task(task)) {
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->bg, delta_ms);
 	}
-	if (SA_CGROUP_SYS_BACKGROUND == grp_id) {
+	if (rootcg_task(task)) {
 		ohm_sched_stat_record_common(sched_stat, &sched_stat->sysbg, delta_ms);
 	}
 	spin_unlock_irqrestore(&sched_stat->lock, flags);

@@ -42,6 +42,14 @@
 #include <../kernel/oplus_cpu/sched/frame_boost/frame_group.h>
 #endif
 
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_TUNE)
+#include <../kernel/oplus_cpu/sched/sched_tune/tune.h>
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+#include "sa_group.h"
+#endif
+
 #include "sched_assist.h"
 #include "sa_common.h"
 #include "sa_fair.h"
@@ -56,6 +64,7 @@
 #include "sa_pipeline.h"
 #endif
 #include "sa_exec.h"
+#include "sa_hmbird.h"
 
 #define CREATE_TRACE_POINTS
 #include "trace_sched_assist.h"
@@ -82,6 +91,12 @@
 #define AFFINITY_MASK_MULT_UNIT (RT_R_MULT_UNIT * SCHED_MAX_RT_R)
 #define AFFINITY_SET_MULT_UNIT (AFFINITY_MASK_MULT_UNIT * SCHED_MAX_AFFINITY_MASK)
 
+#define SCHED_MAX_UCLAMP_MIN 1000ULL
+#define SCHED_MAX_UCLAMP_MAX 1000ULL
+#define SCHED_MAX_STUNE 1000ULL
+#define UCLAMP_MAX_MULT_UNIT (SCHED_MAX_UCLAMP_MIN)
+#define STUNE_MULT_UNIT (UCLAMP_MAX_MULT_UNIT * SCHED_MAX_UCLAMP_MAX)
+
 #ifdef CONFIG_OPLUS_SCHED_HALT_MASK_PRT
 #define SCHED_PARTIAL_HALT_OFFSET 10000LL
 
@@ -101,11 +116,14 @@ DEFINE_PER_CPU(u64, nivcsw);
 
 /* debug print frequency limit */
 static DEFINE_PER_CPU(int, prev_ux_state);
+static DEFINE_PER_CPU(int, prev_sub_ux_state);
 static DEFINE_PER_CPU(int, prev_ux_priority);
 static DEFINE_PER_CPU(u64, prev_vruntime);
 static DEFINE_PER_CPU(u64, prev_min_vruntime);
 static DEFINE_PER_CPU(u64, prev_preset_vruntime);
 static DEFINE_PER_CPU(int, prev_hwbinder_flag);
+static DEFINE_PER_CPU(u64, prev_sched_info);
+static DEFINE_PER_CPU(u64, prev_qs_info);
 
 #if IS_ENABLED(CONFIG_SCHED_WALT)
 #define WINDOW_SIZE (16000000)
@@ -131,25 +149,9 @@ void register_sched_assist_locking_ops(struct sched_assist_locking_ops *ops)
 EXPORT_SYMBOL_GPL(register_sched_assist_locking_ops);
 #endif
 
-#define TOPAPP 4
-#define BGAPP  3
-
-bool is_top(struct task_struct *p)
+__attribute__((weak)) int schedtune_task_boost(struct task_struct *p)
 {
-	struct cgroup_subsys_state *css;
-
-	if (p == NULL)
-		return false;
-
-	rcu_read_lock();
-	css = task_css(p, cpu_cgrp_id);
-	if (!css) {
-		rcu_read_unlock();
-		return false;
-	}
-	rcu_read_unlock();
-
-	return css->id == TOPAPP;
+        return 0;
 }
 
 #ifdef CONFIG_OPLUS_FEATURE_INPUT_BOOST
@@ -157,7 +159,7 @@ bool is_webview(struct task_struct *p)
 {
 	unsigned long im_flag = IM_FLAG_NONE;
 
-	if (!is_top(p))
+	if (!ta_task(p))
 		return false;
 
 	im_flag = oplus_get_im_flag(p);
@@ -170,7 +172,7 @@ bool is_webview(struct task_struct *p)
 
 bool is_heavy_load_top_task(struct task_struct *p)
 {
-	if (!is_top(p))
+	if (!ta_task(p))
 		return false;
 
 	/* is UI main thread or RenderThread of TOP APP */
@@ -354,19 +356,6 @@ bool task_is_runnable(struct task_struct *task)
 	return (task->on_rq && !task->on_cpu);
 }
 
-int get_ux_state(struct task_struct *task)
-{
-	struct oplus_task_struct *ots;
-
-	if (!task)
-		return 0;
-
-	ots = get_oplus_task_struct(task);
-	if (IS_ERR_OR_NULL(ots))
-		return 0;
-
-	return ots->ux_state;
-}
 
 bool is_min_cluster(int cpu)
 {
@@ -450,17 +439,64 @@ void oplus_set_ux_state_lock(struct task_struct *t, int ux_state, int inherit_ty
 
 	if (IS_ERR_OR_NULL(ots))
 		goto out;
-	if (inherit_type == INHERIT_UX_PIFUTEX)
-		goto set;
-	if (!test_task_is_fair(t)) {
+
+	if (!(ots->ux_state & SCHED_ASSIST_UX_MASK) && (ots->sub_ux_state & SCHED_ASSIST_UX_MASK)) {
+		/* ux_state is empty and sub_ux_state is not */
+		DEBUG_BUG_ON(3);
+	}
+
+	if ((ots->ux_state & SCHED_ASSIST_UX_MASK) && (ots->sub_ux_state & SCHED_ASSIST_UX_MASK)) {
+		/* ux_state is inherit or sub_ux_state is not*/
+		DEBUG_BUG_ON(ots->ux_state & SA_TYPE_INHERIT);
+		DEBUG_BUG_ON(!(ots->sub_ux_state & SA_TYPE_INHERIT));
+	}
+
+	if (inherit_type == -1) {
+		DEBUG_BUG_ON(ux_state & SA_TYPE_INHERIT);
+		if (ux_state & SCHED_ASSIST_UX_MASK) {
+			if (ots->ux_state & SA_TYPE_INHERIT) {
+				ots->sub_ux_state = ots->ux_state;
+			}
+		} else {
+			if (ots->ux_state & SA_TYPE_INHERIT) {
+				goto out;
+			} else if (ots->sub_ux_state & SCHED_ASSIST_UX_MASK) {
+				ux_state = ots->sub_ux_state;
+				ots->sub_ux_state = 0;
+			}
+		}
+	} else {
+		if (ux_state & SCHED_ASSIST_UX_MASK) {
+			DEBUG_BUG_ON(!(ux_state & SA_TYPE_INHERIT));
+		}
+		if (ux_state & SCHED_ASSIST_UX_MASK) {
+			if ((ots->ux_state & SCHED_ASSIST_UX_MASK) && !(ots->ux_state & SA_TYPE_INHERIT)) {
+				ots->sub_ux_state = ux_state;
+				goto out;
+			}
+		} else {
+			if (!(ots->ux_state & SA_TYPE_INHERIT)) {
+				if (ots->sub_ux_state & SCHED_ASSIST_UX_MASK) {
+					ots->sub_ux_state = ux_state;
+				}
+				goto out;
+			}
+		}
+	}
+
+	if (ux_state == ots->ux_state)
+		goto out;
+	/* just save ux state, if it is rt */
+	if (unlikely(!test_task_is_fair(t))) {
 		/* rt task set ux_state as well */
 		ots->ux_state = ux_state;
 		ots->ux_priority = ux_state_to_priority(ux_state);
-		ots->ux_nice = ux_state_to_nice(ux_state);
+		ots->ux_nice = ux_type_to_nice(ux_state);
 		goto out;
 	}
-	if (ux_state == ots->ux_state)
-		goto out;
+
+	if (inherit_type == INHERIT_UX_PIFUTEX)
+		goto set;
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
 	if (oplus_pipeline_task_skip_ux_change(ots, &ux_state))
@@ -502,20 +538,36 @@ set:
 	smp_mb__after_spinlock();
 	ots->ux_state = ux_state;
 
+	/* if ux is disabled, task only removed from list, not insert to list. */
+	if (unlikely(!global_sched_assist_enabled) || test_task_is_hmbird(t)) {
+		if (!oplus_rbnode_empty(&ots->ux_entry)) {
+			update_ux_timeline_task_removal(orq, ots, &t->se, task_current(rq, t));
+			put_task_struct(t);
+		}
+		ots->ux_priority = ux_state_to_priority(ux_state);
+		ots->ux_nice = ux_type_to_nice(ux_state);
+		spin_unlock_irqrestore(orq->ux_list_lock, irqflag);
+		goto out;
+	}
+
 	if (!(ux_state & SCHED_ASSIST_UX_MASK)) {
 		if (!oplus_rbnode_empty(&ots->ux_entry)) {
+			bool is_curr;
 			lockdep_assert_rq_held(rq);
-			update_ux_timeline_task_removal(orq, ots);
-			if (task_current(rq, t) && (!oplus_rbtree_empty(&orq->ux_list))) {
+			is_curr = task_current(rq, t);
+			update_ux_timeline_task_removal(orq, ots, &t->se, is_curr);
+			if (is_curr) {
+				/* if current's ux turn to off, it is likely to resched for this rq */
 				resched_curr(rq);
 			}
 			put_task_struct(t);
 			/* make sure task is removed from the list before ux_priority set to invalid */
-			smp_wmb();
+			/* smp_wmb(); */
 		}
 		ots->ux_priority = -1;
 		ots->ux_nice = -1;
 	} else if (task_on_rq_queued(t)) {
+		int prio, nice;
 		bool unlinked, is_fair;
 		struct task_struct *curr;
 		lockdep_assert_rq_held(rq);
@@ -528,32 +580,47 @@ set:
 			/*if (!ots->total_exec) {
 				ots->sum_exec_baseline = t->se.sum_exec_runtime;
 			}*/
-			initial_prio_nice_and_vruntime(orq, ots, ux_state_to_priority(ux_state), ux_state_to_nice(ux_state));
+			prio = ux_state_to_priority(ux_state);
+			nice = ux_type_to_nice(ux_state);
+			initial_prio_nice_and_vruntime(orq, ots, prio, nice);
 			insert_task_to_ux_timeline(ots, orq);
 			save_task_vruntime_delta(t, ots);
 		} else {
-			update_ux_timeline_task_change(orq, ots, ux_state_to_priority(ux_state), ux_state_to_nice(ux_state));
+			int next_type;
+			pick_next_ux_exec(ots, 0, &next_type);
+			if (next_type) {
+				prio = ux_type_to_priority(ots, next_type);
+				nice = ux_type_to_nice(next_type);
+				update_ux_timeline_task_change(orq, ots, prio, nice);
+			} else {
+				/* task is already timeout for current ux_state */
+				update_ux_timeline_task_removal(orq, ots, &t->se, task_current(rq, t));
+				put_task_struct(t);
+			}
 		}
 		rcu_read_lock();
 		curr = rcu_dereference(rq->curr);
-		is_fair = (curr != NULL) && test_task_is_fair(curr);
+		is_fair = (curr == NULL) || test_task_is_fair(curr);
 		rcu_read_unlock();
-		if (is_fair && !task_current(rq, t) &&
-			(ots == ux_list_first_entry(&orq->ux_list))) {
+		if (is_fair && !task_current(rq, t) && (ots == ux_list_first_entry(&orq->ux_list))) {
 			resched_curr(rq);
 		}
 	} else {
 		ots->ux_priority = ux_state_to_priority(ux_state);
-		ots->ux_nice = ux_state_to_nice(ux_state);
+		ots->ux_nice = ux_type_to_nice(ux_state);
 	}
 	spin_unlock_irqrestore(orq->ux_list_lock, irqflag);
 
 out:
+	/* ux_state is empty and sub_ux_state is not */
+	DEBUG_BUG_ON((ots != NULL) && !(ots->ux_state & SCHED_ASSIST_UX_MASK) && (ots->sub_ux_state & SCHED_ASSIST_UX_MASK));
+
 	if (need_lock_rq && need_lock_pi) {
 		task_rq_unlock(rq, t, &flags);
 	} else if (need_lock_rq && !need_lock_pi) {
 		__task_rq_unlock(rq, &flags);
 	}
+	set_ux_task_dsq_id(t);
 }
 EXPORT_SYMBOL(oplus_set_ux_state_lock);
 
@@ -561,6 +628,15 @@ noinline int tracing_mark_write(const char *buf)
 {
 	trace_printk(buf);
 	return 0;
+}
+
+int is_vip_mvp(struct task_struct *p)
+{
+	struct oplus_task_struct *ots = get_oplus_task_struct(p);
+	if (IS_ERR_OR_NULL(ots))
+		return false;
+
+	return atomic_read(&ots->is_vip_mvp);
 }
 
 void ux_state_systrace_c(unsigned int cpu, struct task_struct *p)
@@ -573,6 +649,9 @@ void ux_state_systrace_c(unsigned int cpu, struct task_struct *p)
 		ux_state = SCHED_UX_STATE_DEBUG_MAGIC;
 	else
 		 ux_state =  (oplus_get_ux_state(p) & (SCHED_ASSIST_UX_MASK | SA_TYPE_INHERIT | SCHED_ASSIST_UX_PRIORITY_MASK));
+
+	if (is_vip_mvp(p))
+		ux_state |= SA_TYPE_MQ_VIP;
 
 	if (per_cpu(prev_ux_state, cpu) != ux_state) {
 		char buf[256];
@@ -636,6 +715,14 @@ void ux_priority_systrace_c(unsigned int cpu, struct task_struct *t)
 		tracing_mark_write(buf);
 		per_cpu(prev_preset_vruntime, cpu) = value;
 	}
+
+	if (per_cpu(prev_sub_ux_state, cpu) != ots->sub_ux_state) {
+		char buf[256];
+
+		snprintf(buf, sizeof(buf), "C|9998|Cpu%d_sub_ux_state|%d\n", cpu, ots->sub_ux_state);
+		tracing_mark_write(buf);
+		per_cpu(prev_sub_ux_state, cpu) = ots->sub_ux_state;
+	}
 }
 
 void sched_info_systrace_c(unsigned int cpu, struct task_struct *p)
@@ -643,8 +730,8 @@ void sched_info_systrace_c(unsigned int cpu, struct task_struct *p)
 	struct rq *rq = cpu_rq(cpu);
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct rt_rq *rt_rq = &rq->rt;
-	int cfs_running = cfs_rq->h_nr_running;
-	int rt_running = rt_rq->rt_nr_running;
+	unsigned int cfs_running = cfs_rq->h_nr_running;
+	unsigned int rt_running = rt_rq->rt_nr_running;
 	struct oplus_task_struct *ots = get_oplus_task_struct(p);
 	u64 s_info = 0;
 	char buf[256];
@@ -654,15 +741,14 @@ void sched_info_systrace_c(unsigned int cpu, struct task_struct *p)
 	cset = task_css_set(p);
 	cpu_cid = cset->subsys[cpu_cgrp_id] ? cset->subsys[cpu_cgrp_id]->id : 0;
 	cpuset_cid = cset->subsys[cpuset_cgrp_id] ? cset->subsys[cpuset_cgrp_id]->id : 0;
+
 	if (cpu_cid >= SCHED_MAX_CPUCTL)
 		cpu_cid = 0;
 	if (cpuset_cid >= SCHED_MAX_CPUSET)
 		cpuset_cid = 0;
 
-	if (cfs_running >= SCHED_MAX_CFS_R)
-		cfs_running = SCHED_MAX_CFS_R;
-	if (rt_running >= SCHED_MAX_RT_R)
-		rt_running = SCHED_MAX_RT_R;
+	cfs_running = min(cfs_running, (unsigned int)SCHED_MAX_CFS_R - 1);
+	rt_running = min(rt_running, (unsigned int)SCHED_MAX_RT_R - 1);
 
 	s_info += cpuset_cid;
 	s_info += cpu_cid * CPUCTL_MULT_UNIT;
@@ -674,8 +760,40 @@ void sched_info_systrace_c(unsigned int cpu, struct task_struct *p)
 			&& ots->affinity_pid > 0 && ots->affinity_pid < PID_MAX_LIMIT)
 			s_info += ((u64)ots->affinity_pid) * AFFINITY_SET_MULT_UNIT;
 	}
-	snprintf(buf, sizeof(buf), "C|9999|Cpu%d_sched_info|%llu\n", cpu, s_info);
-	tracing_mark_write(buf);
+
+	if (per_cpu(prev_sched_info, cpu) != s_info) {
+		snprintf(buf, sizeof(buf), "C|9999|Cpu%d_sched_info|%llu\n", cpu, s_info);
+		tracing_mark_write(buf);
+		per_cpu(prev_sched_info, cpu) = s_info;
+	}
+}
+
+void qs_info_systrace_c(unsigned int cpu, struct task_struct *p)
+{
+	unsigned int uclamp_min = 0, uclamp_max = 0;
+	unsigned int stune_boost = 0;
+	u64 s_info = 0;
+	char buf[256];
+
+	uclamp_min = uclamp_eff_value(p, UCLAMP_MIN);
+	uclamp_max = uclamp_eff_value(p, UCLAMP_MAX);
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_TUNE)
+	stune_boost = schedtune_task_boost(p) + 100;
+#endif
+
+	uclamp_min = min(uclamp_min, (unsigned int)SCHED_MAX_UCLAMP_MIN - 1);
+	uclamp_max = min(uclamp_max, (unsigned int)SCHED_MAX_UCLAMP_MAX - 1);
+	stune_boost = min(stune_boost, (unsigned int)SCHED_MAX_STUNE - 1);
+
+	s_info += uclamp_min;
+	s_info += uclamp_max * UCLAMP_MAX_MULT_UNIT;
+	s_info += stune_boost * STUNE_MULT_UNIT;
+
+	if (per_cpu(prev_qs_info, cpu) != s_info) {
+		snprintf(buf, sizeof(buf), "C|9999|Cpu%d_qs_info|%llu\n", cpu, s_info);
+		tracing_mark_write(buf);
+		per_cpu(prev_qs_info, cpu) = s_info;
+	}
 }
 
 void sa_scene_systrace_c(void)
@@ -834,12 +952,14 @@ inline bool test_task_is_fair(struct task_struct *task)
 inline bool test_task_is_rt(struct task_struct *task)
 {
 	DEBUG_BUG_ON(!task);
+
 	/* valid RT priority is 0..MAX_RT_PRIO-1 */
 	if ((task->prio >= 0) && (task->prio <= MAX_RT_PRIO-1))
 		return true;
 
 	return false;
 }
+EXPORT_SYMBOL_GPL(test_task_is_fair);
 EXPORT_SYMBOL_GPL(test_task_is_rt);
 
 unsigned int ux_task_exec_limit(struct task_struct *p)
@@ -857,26 +977,10 @@ unsigned int ux_task_exec_limit(struct task_struct *p)
 		return exec_limit;
 	}
 
-	if (ux_state & SA_TYPE_SWIFT)
-		exec_limit *= 2;
-	else if (ux_state & SA_TYPE_ANIMATOR)
-		exec_limit *= 12;
-	else if (ux_state & SA_TYPE_LIGHT)
-		exec_limit *= 3;
-	else if (ux_state & SA_TYPE_HEAVY)
-		exec_limit *= 25;
-	else if (ux_state & SA_TYPE_LISTPICK)
-		exec_limit *= 30;
-
+	exec_limit = ux_max_exec_time(ux_state);
 	return exec_limit;
 }
 EXPORT_SYMBOL_GPL(ux_task_exec_limit);
-
-/* identify ux only opt in some case, but always keep it's id_type, and wont do inherit through test_task_ux() */
-bool test_task_identify_ux(struct task_struct *task, int id_type_ux)
-{
-	return false;
-}
 
 void set_im_flag_with_bit(int im_flag, struct task_struct *task)
 {
@@ -895,10 +999,7 @@ void set_im_flag_with_bit(int im_flag, struct task_struct *task)
 	}
 }
 
-inline bool test_list_pick_ux(struct task_struct *task)
-{
-	return false;
-}
+
 
 bool test_task_ux(struct task_struct *task)
 {
@@ -937,45 +1038,38 @@ EXPORT_SYMBOL_GPL(test_task_ux);
 
 int get_ux_state_type(struct task_struct *task)
 {
+	struct oplus_task_struct *ots;
+
 	if (!task)
 		return UX_STATE_INVALID;
 
 	if (!test_task_is_fair(task))
 		return UX_STATE_INVALID;
 
-	if (oplus_get_ux_state(task) & SA_TYPE_INHERIT)
-		return UX_STATE_INHERIT;
+	ots = get_oplus_task_struct(task);
 
-	if (oplus_get_ux_state(task) & SCHED_ASSIST_UX_MASK)
-		return UX_STATE_SCHED_ASSIST;
+	if (IS_ERR_OR_NULL(ots))
+		return UX_STATE_NONE;
+
+	if ((ots->ux_state & SCHED_ASSIST_UX_MASK) && (ots->sub_ux_state & SCHED_ASSIST_UX_MASK))
+		return UX_STATE_COMBINED;
+
+	if (ots->ux_state & SCHED_ASSIST_UX_MASK) {
+		return (ots->ux_state & SA_TYPE_INHERIT) ? UX_STATE_INHERIT : UX_STATE_STATIC;
+	}
 
 	return UX_STATE_NONE;
 }
 EXPORT_SYMBOL_GPL(get_ux_state_type);
 
-/* check if a's ux prio higher than b's prio */
-bool prio_higher(int a, int b)
+bool is_multiple_ux(struct oplus_task_struct *ots)
 {
-	int a_priority = a & SCHED_ASSIST_UX_PRIORITY_MASK;
-	int b_priority = b & SCHED_ASSIST_UX_PRIORITY_MASK;
+	unsigned int ux_state_type = ots->ux_state & SCHED_ASSIST_UX_MASK;
+	unsigned int sub_ux_state_type = ots->sub_ux_state & SCHED_ASSIST_UX_MASK;
+	unsigned int ux_type = (ux_state_type | sub_ux_state_type);
 
-	if (a_priority != b_priority)
-		return (a_priority > b_priority);
-
-	if (a & SA_TYPE_SWIFT)
-		return !(b & SA_TYPE_SWIFT);
-
-	if (a & SA_TYPE_ANIMATOR)
-		return !(b & SA_TYPE_ANIMATOR);
-
-	if (a & SA_TYPE_LIGHT)
-		return !(b & (SA_TYPE_ANIMATOR | SA_TYPE_LIGHT | SA_TYPE_SWIFT));
-
-	if (a & SA_TYPE_HEAVY)
-		return !(b & (SA_TYPE_ANIMATOR | SA_TYPE_LIGHT | SA_TYPE_HEAVY | SA_TYPE_SWIFT));
-
-	/* SA_TYPE_LISTPICK */
-	return false;
+	/* has more than 1 bit */
+	return ux_type && (ux_type & ux_type - 1);
 }
 
 /*s64 __maybe_unused account_ux_runtime(struct rq *rq, struct task_struct *curr)
@@ -1039,6 +1133,9 @@ static void enqueue_ux_thread(struct rq *rq, struct task_struct *p)
 	if (IS_ERR_OR_NULL(ots))
 		return;
 
+	if (test_task_is_hmbird(p))
+		return;
+
 	if (!test_task_is_fair(p) || !oplus_rbnode_empty(&ots->ux_entry))
 		return;
 
@@ -1061,7 +1158,7 @@ static void enqueue_ux_thread(struct rq *rq, struct task_struct *p)
 			int ux_priority, ux_nice;
 			/* ots->sum_exec_baseline = p->se.sum_exec_runtime; */
 			ux_priority = ux_state_to_priority(ots->ux_state);
-			ux_nice = ux_state_to_nice(ots->ux_state);
+			ux_nice = ux_type_to_nice(ots->ux_state);
 			initial_prio_nice_and_vruntime(orq, ots, ux_priority, ux_nice);
 		} else {
 			update_vruntime_task_attach(orq, ots);
@@ -1090,27 +1187,36 @@ static void dequeue_ux_thread(struct rq *rq, struct task_struct *p)
 	spin_lock_irqsave(orq->ux_list_lock, irqflag);
 	smp_mb__after_spinlock();
 	if (!oplus_rbnode_empty(&ots->ux_entry)) {
-		update_ux_timeline_task_removal(orq, ots);
+		int ux_state_type;
+		update_ux_timeline_task_removal(orq, ots, NULL, false);
 
 		/* inherit ux can only keep it's ux state in MAX_INHERIT_GRAN */
-		if (get_ux_state_type(p) == UX_STATE_INHERIT &&
+		ux_state_type = get_ux_state_type(p);
+		if ((ux_state_type == UX_STATE_INHERIT || ux_state_type == UX_STATE_COMBINED) &&
 			(p->se.sum_exec_runtime - ots->inherit_ux_start > get_max_inherit_gran(p))) {
 			atomic64_set(&ots->inherit_ux, 0);
 			ots->ux_depth = 0;
-			ots->ux_state = 0;
+			if (ots->ux_state & SA_TYPE_INHERIT) {
+				ots->ux_state = 0;
+			}
+			if (ots->sub_ux_state & SA_TYPE_INHERIT) {
+				ots->sub_ux_state = 0;
+			}
+			set_ux_task_dsq_id(p);
 			if (unlikely(global_debug_enabled & DEBUG_FTRACE))
 				trace_printk("dequeue and unset inherit ux task=%-12s pid=%d tgid=%d sum_exec_runtime=%llu inherit_start=%llu\n",
-					p->comm, p->pid, p->tgid, p->se.sum_exec_runtime, ots->inherit_ux_start);
+							p->comm, p->pid, p->tgid, p->se.sum_exec_runtime, ots->inherit_ux_start);
 		}
 
-		if (ots->ux_state & SA_TYPE_ONCE) {
+		/* if (ots->ux_state & SA_TYPE_ONCE) {
 			atomic64_set(&ots->inherit_ux, 0);
 			ots->ux_depth = 0;
 			ots->ux_state = 0;
+			set_ux_task_dsq_id(p);
 			if (unlikely(global_debug_enabled & DEBUG_FTRACE))
 				trace_printk("dequeue and unset once ux task=%-12s pid=%d tgid=%d inherit_start=%llu\n",
 					p->comm, p->pid, p->tgid, ots->inherit_ux_start);
-		}
+		}*/
 		put_task_struct(p);
 	}
 
@@ -1186,9 +1292,13 @@ EXPORT_SYMBOL_GPL(test_set_inherit_ux);
 
 void set_inherit_ux(struct task_struct *task, int type, int depth, int inherit_val)
 {
+	struct oplus_task_struct *ots;
 	if (!task || type >= INHERIT_UX_MAX)
 		return;
 
+	ots = get_oplus_task_struct(task);
+	if (IS_ERR_OR_NULL(ots))
+		return;
 	/*
 	 * For PIFUTEX, &task may inherit rt prio but would lose it soon after unlock,
 	 * at this case, we should check fair_class with it's ->normal_prio but not ->prio.
@@ -1203,11 +1313,6 @@ void set_inherit_ux(struct task_struct *task, int type, int depth, int inherit_v
 set:
 	inherit_ux_inc(task, type);
 	oplus_set_ux_depth(task, depth + 1);
-
-	if (inherit_val & SA_TYPE_LISTPICK) {
-		inherit_val &= (~SA_TYPE_LISTPICK);
-		inherit_val |= SA_TYPE_HEAVY;
-	}
 
 	oplus_set_ux_state_lock(task, (inherit_val & SCHED_ASSIST_UX_MASK) | SA_TYPE_INHERIT, type, true);
 	oplus_set_inherit_ux_start(task, jiffies_to_nsecs(jiffies));
@@ -1230,7 +1335,7 @@ void reset_inherit_ux(struct task_struct *inherit_task, struct task_struct *ux_t
 	if (!test_inherit_ux(inherit_task, reset_type) || !(reset_inherit & SA_TYPE_ANIMATOR))
 		return;
 
-	ux_state = (oplus_get_ux_state(inherit_task) & ~SCHED_ASSIST_UX_MASK) | reset_inherit;
+	ux_state = (oplus_get_inherited_ux_state(inherit_task) & ~SCHED_ASSIST_UX_MASK) | reset_inherit | SA_TYPE_INHERIT;
 	oplus_set_ux_depth(inherit_task, reset_depth + 1);
 	oplus_set_ux_state_lock(inherit_task, ux_state, reset_type, true);
 	trace_inherit_ux_reset(inherit_task, reset_type, oplus_get_ux_state(inherit_task),
@@ -1283,7 +1388,7 @@ void clear_all_inherit_type(struct task_struct *p)
 
 	atomic64_set(&ots->inherit_ux, 0);
 	ots->ux_depth = 0;
-	oplus_set_ux_state_lock(p, 0, -1, true);
+	oplus_set_ux_state_lock(p, 0, INHERIT_UX_MAX, true);
 }
 
 int get_max_inherit_gran(struct task_struct *p)
@@ -1352,6 +1457,14 @@ void adjust_rt_lowest_mask(struct task_struct *p, struct cpumask *local_cpu_mask
 	drop_cpu = cpumask_first(local_cpu_mask);
 	while (drop_cpu < nr_cpu_ids) {
 		int ux_task_state;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+		if (oplus_pipeline_rt_skip_prime_cpu(drop_cpu)) {
+			cpumask_clear_cpu(drop_cpu, local_cpu_mask);
+			drop_cpu = cpumask_next(drop_cpu, local_cpu_mask);
+			continue;
+		}
+#endif
 
 		/*
 		 * Note:
@@ -1504,6 +1617,15 @@ bool sa_skip_rt_sync(struct rq *rq, struct task_struct *p, bool *sync)
 	struct oplus_task_struct *ots;
 	unsigned long irqflag;
 
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	if (oplus_pipeline_rt_skip_prime_cpu(cpu)) {
+		if (*sync) {
+			*sync = false;
+			return true;
+		}
+	}
+#endif
+
 	spin_lock_irqsave(orq->ux_list_lock, irqflag);
 	ots = ux_list_first_entry(&orq->ux_list);
 	if (IS_ERR_OR_NULL(ots) || test_bit(IM_FLAG_CAMERA_HAL, &ots->im_flag)) {
@@ -1529,6 +1651,11 @@ bool sa_rt_skip_ux_cpu(int cpu)
 	struct rq *rq;
 	struct oplus_rq *orq;
 	struct task_struct *curr;
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
+	if (oplus_pipeline_rt_skip_prime_cpu(cpu))
+		return true;
+#endif
 
 	rq = cpu_rq(cpu);
 	orq = (struct oplus_rq *) rq->android_oem_data1;
@@ -1696,9 +1823,12 @@ void android_rvh_schedule_handler(void *unused, unsigned int sched_mode, struct 
 		fbg_android_rvh_schedule_callback(prev, next, rq);
 #endif
 
-	if (unlikely(global_debug_enabled & DEBUG_SYSTRACE) && likely(prev != next)) {
+	if (unlikely(global_debug_enabled & DEBUG_SYSTRACE)) {
 		ux_state_systrace_c(cpu_of(rq), next);
-		sched_info_systrace_c(cpu_of(rq), next);
+		if (likely(prev != next)) {
+			sched_info_systrace_c(cpu_of(rq), next);
+			qs_info_systrace_c(cpu_of(rq), next);
+		}
 	}
 
 #ifdef CONFIG_LOCKING_PROTECT
@@ -1741,24 +1871,6 @@ void android_vh_scheduler_tick_handler(void *unused, struct rq *rq)
 static int boost_kill = 1;
 module_param_named(boost_kill, boost_kill, uint, 0644);
 
-int get_grp(struct task_struct *p)
-{
-	struct cgroup_subsys_state *css;
-
-	if (p == NULL)
-		return false;
-
-	rcu_read_lock();
-	css = task_css(p, cpu_cgrp_id);
-	if (!css) {
-		rcu_read_unlock();
-		return false;
-	}
-	rcu_read_unlock();
-
-	return css->id;
-}
-
 static inline void do_boost_kill_task(struct task_struct *p)
 {
 	cpumask_var_t boost_mask;
@@ -1780,7 +1892,7 @@ void android_vh_exit_signal_handler(void *unused, struct task_struct *p)
 	if (p == NULL)
 		return;
 
-	if (boost_kill && get_grp(p) == BGAPP) {
+	if (boost_kill && bg_task(p)) {
 		do_boost_kill_task(p);
 	}
 }
@@ -1791,7 +1903,7 @@ static int process_exit_notifier(struct notifier_block *self,
 	struct task_struct *p = v;
 
 	/* only boost background tasks */
-	if (boost_kill && get_grp(p) == BGAPP) {
+	if (boost_kill && bg_task(p)) {
 		rcu_read_lock();
 		do_boost_kill_task(p);
 		rcu_read_unlock();
@@ -1812,37 +1924,34 @@ void android_vh_cgroup_set_task_handler(void *unused, int ret, struct task_struc
 void sched_setaffinity_tracking(struct task_struct *task, const struct cpumask *in_mask)
 {
 	struct oplus_task_struct *ots;
-	struct task_struct *tsk_from = current;
 	struct task_struct *leader = NULL;
 	pid_t affinity_pid = -1, affinity_tgid = -1;
-	char affinity_comm[TASK_COMM_LEN];
 
 	ots = get_oplus_task_struct(task);
 	if (IS_ERR_OR_NULL(ots))
 		return;
 
-	rcu_read_lock();
-	if (pid_alive(tsk_from)) {
-		affinity_pid = tsk_from->pid;
-		strncpy(affinity_comm, tsk_from->comm, TASK_COMM_LEN);
-		leader = rcu_dereference(tsk_from->group_leader);
-		if (pid_alive(leader))
+	if (cpumask_weight(in_mask) == nr_cpu_ids) {
+		clear_bit(OTS_STATE_SET_AFFINITY, &ots->state);
+		ots->affinity_pid = ots->affinity_tgid = -1;
+	} else {
+		rcu_read_lock();
+		affinity_pid = current->pid;
+		leader = current->group_leader;
+		if (leader && pid_alive(leader))
 			affinity_tgid = leader->pid;
-	}
-	rcu_read_unlock();
+		rcu_read_unlock();
 
-	if(cpumask_weight(in_mask) < nr_cpu_ids) {
-		set_bit(OTS_STATE_SET_AFFINITY, &ots->state);
 		ots->affinity_pid = affinity_pid;
 		ots->affinity_tgid = affinity_tgid;
-		if (unlikely(global_debug_enabled & DEBUG_FTRACE)) {
-			pr_info("pid=%d comm=%s set task(pid=%d comm=%s state=%lu) affinity to mask=%*pbl\n",
-				tsk_from->pid, tsk_from->comm, task->pid, task->comm, ots->state, cpumask_pr_args(in_mask));
-		}
+		set_bit(OTS_STATE_SET_AFFINITY, &ots->state);
 	}
 }
 
-
+void android_rvh_set_cpus_allowed_comm_handler(void *unused, struct task_struct *task, const struct cpumask *new_mask)
+{
+	sched_setaffinity_tracking(task, new_mask);
+}
 
 void android_rvh_set_cpus_allowed_by_task_handler(void *unused, const struct cpumask *cpu_valid_mask, const struct cpumask *new_mask,
 												struct task_struct *p, unsigned int *dest_cpu) {
@@ -1863,18 +1972,6 @@ void android_rvh_set_cpus_allowed_by_task_handler(void *unused, const struct cpu
 			}
 		}
 	}
-
-	if (cpumask_weight(new_mask) == nr_cpu_ids) {
-		clear_bit(OTS_STATE_SET_AFFINITY, &ots->state);
-		ots->affinity_pid = -1;
-		ots->affinity_tgid = -1;
-		if (unlikely(global_debug_enabled & DEBUG_FTRACE)) {
-			pr_info("clear affinity to task pid=%d comm=%s\n", p->pid, p->comm);
-		}
-		return;
-	}
-
-	sched_setaffinity_tracking(p, new_mask);
 }
 EXPORT_SYMBOL_GPL(android_rvh_set_cpus_allowed_by_task_handler);
 
@@ -1902,5 +1999,12 @@ void android_vh_sched_setaffinity_early_handler(void *unused, struct task_struct
 
 	if (test_bit(IM_FLAG_FORBID_SET_CPU_AFFINITY, &im_flag))
 		*skip = 1;
+}
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+void android_rvh_cpu_cgroup_online_handler(void *unused, struct cgroup_subsys_state *css)
+{
+	oplus_update_tg_map(css);
 }
 #endif

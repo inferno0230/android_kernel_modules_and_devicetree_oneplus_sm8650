@@ -30,10 +30,20 @@ struct bus_operations {
 	int (*spi_get_para)(void *ops, uint8_t *mode, uint8_t *bits_per_word, int *speed);
 };
 
+struct spi_cache {
+	struct spi_transfer *xfer;
+	uint32_t xfer_count;
+	uint8_t *tx_buf;
+	size_t tx_count;
+	uint8_t *rx_buf;
+	size_t rx_count;
+};
+
 struct spi_param {
 	uint16_t byte_delay_us;
 	uint16_t block_delay_us;
 	int mode;
+	struct spi_cache cache;
 };
 
 struct spi_bus {

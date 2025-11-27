@@ -15,6 +15,8 @@
 
 #include "game_ctrl.h"
 
+#include "task_boost/heavy_task_boost.h"
+#include "critical_task_boost.h"
 /*
  * render related thread wake information
  */
@@ -27,7 +29,6 @@ struct render_related_thread {
 static int rt_num = 0;
 static int total_num = 0;
 static pid_t game_tgid = -1;
-static pid_t sf_app_wakeup_game_thread_pid = -1;
 
 static DEFINE_RWLOCK(rt_info_rwlock);
 atomic_t have_valid_render_pid = ATOMIC_INIT(0);
@@ -60,21 +61,21 @@ static struct render_related_thread *find_related_thread(struct task_struct *tas
 	return NULL;
 }
 
-static bool is_render_thread(struct render_related_thread * wakee)
+static bool is_render_thread(struct render_related_thread * thread)
 {
 	int i;
 
 	for (i = 0; i < rt_num; i++) {
-		if (related_threads[i].pid == wakee->pid)
+		if (related_threads[i].pid == thread->pid)
 			return true;
 	}
 
 	return false;
 }
 
-static bool is_sepcific_waker(void)
+static bool is_sepcific_thread(struct task_struct *task)
 {
-	return !strcmp(current->comm, "UnityMain");
+	return !strcmp(task->comm, "UnityMain");
 }
 
 static void try_to_wake_up_success_hook(void *unused, struct task_struct *task)
@@ -114,18 +115,12 @@ static void try_to_wake_up_success_hook(void *unused, struct task_struct *task)
 			} else {
 				wakee->wake_count++;
 			}
-			sf_app_wakeup_game_thread_pid = task->pid;
+
 			goto unlock;
 		}
 
 		if (!same_rt_thread_group(current, task))
 			goto unlock;
-
-		/* not repeat count */
-		if (current->pid == sf_app_wakeup_game_thread_pid) {
-			sf_app_wakeup_game_thread_pid = -1;
-			goto unlock;
-		}
 
 		/* wakee is a render related thread */
 		wakee = find_related_thread(task);
@@ -143,12 +138,12 @@ static void try_to_wake_up_success_hook(void *unused, struct task_struct *task)
 				waker->wake_count++;
 			}
 
-			if (is_render_thread(wakee) || is_sepcific_waker())
+			if (is_render_thread(wakee) || is_sepcific_thread(current) || is_sepcific_thread(task))
 				wakee->wake_count++;
 		} else {
 			/* waker is a sepcific render related thread */
 			waker = find_related_thread(current);
-			if (waker && is_sepcific_waker()) {
+			if (waker && (is_render_thread(waker) || is_sepcific_thread(current))) {
 				if (total_num >= MAX_TID_COUNT)
 					goto unlock;
 				wakee = &related_threads[total_num];
@@ -156,12 +151,23 @@ static void try_to_wake_up_success_hook(void *unused, struct task_struct *task)
 				wakee->task = task;
 				wakee->wake_count = 1;
 				total_num++;
+
+				waker->wake_count++;
 			}
 		}
 
 unlock:
 		write_unlock(&rt_info_rwlock);
 	}
+	heavy_task_boost(task, related_threads, total_num);
+}
+
+static bool need_tracked_task(char *name)
+{
+	bool skip = strstr(name, "binder:") || strstr(name, "HwBinder:") ||
+				strstr(name, "AudioTrack") || strstr(name, "NativeThread");
+
+	return !skip;
 }
 
 /*
@@ -190,8 +196,10 @@ static int rt_info_show(struct seq_file *m, void *v)
 	struct render_related_thread *results;
 	char *page;
 	char task_name[TASK_COMM_LEN];
+	pid_t tracked_pids[MAX_TRACKED_TASK_NUM];
+	int tracked_pid_num = 0;
 	ssize_t len = 0;
-
+	reset_critical_task_time();
 	if (atomic_read(&have_valid_render_pid) == 0)
 		return -ESRCH;
 
@@ -230,10 +238,18 @@ static int rt_info_show(struct seq_file *m, void *v)
 
 	for (i = 0; i < result_num && i < MAX_TASK_NR; i++) {
 		if (get_task_name(results[i].pid, results[i].task, task_name)) {
+			if ((tracked_pid_num < MAX_TRACKED_TASK_NUM) && need_tracked_task(task_name)) {
+				tracked_pids[tracked_pid_num] = results[i].pid;
+				tracked_pid_num++;
+			}
+
 			len += snprintf(page + len, RESULT_PAGE_SIZE - len, "%d;%s;%u\n",
 				results[i].pid, task_name, results[i].wake_count);
 		}
 	}
+
+	if (tracked_pid_num > 0)
+		add_tasks_to_frame_group(tracked_pids, tracked_pid_num);
 
 	if (len > 0)
 		seq_puts(m, page);
@@ -286,7 +302,6 @@ static ssize_t rt_info_proc_write(struct file *file, const char __user *buf,
 	rt_num = 0;
 	total_num = 0;
 	game_tgid = -1;
-	sf_app_wakeup_game_thread_pid = -1;
 	ed_set_render_task(NULL);
 
 	while (iter != NULL) {
@@ -384,6 +399,30 @@ static void register_rt_info_vendor_hooks(void)
 {
 	/* Register vender hook in kernel/sched/core.c */
 	register_trace_android_rvh_try_to_wake_up_success(try_to_wake_up_success_hook, NULL);
+}
+
+int get_critical_task_state(const char *name, pid_t pid)
+{
+	struct task_struct *task = NULL;
+	int name_len, i;
+	if (total_num <= 0 || atomic_read(&have_valid_render_pid) == 0) {
+		return -1;
+	}
+	name_len = strlen(name);
+	for (i = 0; i < total_num; i++) {
+		if (related_threads[i].task && strncmp(name, related_threads[i].task->comm, name_len) == 0) {
+			task = related_threads[i].task;
+			break;
+		}
+	}
+	if (task == NULL || task_pid_nr(task) != pid) {
+		return -1;
+	}
+	if (task_is_running(task)) {
+		return 0;
+	} else {
+		return 1;
+	}
 }
 
 int rt_info_init(void)

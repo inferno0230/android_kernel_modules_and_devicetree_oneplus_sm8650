@@ -35,6 +35,10 @@
 #include <linux/part_stat.h>
 #include <linux/mm.h>
 
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+#include <linux/swap.h>
+#include "kcompressd.h"
+#endif
 #include "zram_drv.h"
 #include "zram_drv_internal.h"
 #ifdef CONFIG_HYBRIDSWAP
@@ -151,6 +155,11 @@ inline bool is_chp_zram(struct zram *zram)
 static inline bool is_thp_partial_io(struct bio_vec *bvec)
 {
 	return bvec->bv_len != CONT_PTE_SIZE;
+}
+#else
+inline bool is_chp_zram(struct zram *zram)
+{
+	return false;
 }
 #endif
 
@@ -1362,7 +1371,17 @@ static void zram_free_page(struct zram *zram, size_t index)
 	}
 
 #ifdef CONFIG_HYBRIDSWAP_CORE
-	hybridswap_untrack(zram, index);
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	if (is_chp_zram(zram)) {
+		hybridswap_untrack_thp(zram, index);
+	} else {
+#endif
+		hybridswap_untrack(zram, index);
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	}
+#endif
+
 #endif
 
 	if (zram_test_flag(zram, index, ZRAM_WB)) {
@@ -1888,7 +1907,7 @@ out:
 	}
 
 #ifdef CONFIG_HYBRIDSWAP_CORE
-	hybridswap_track(zram, index, page_memcg(page));
+	hybridswap_track_thp(zram, index, page_memcg(page));
 #endif
 	zram_slot_unlock(zram, index);
 
@@ -2217,6 +2236,16 @@ static void __zram_make_request(struct zram *zram, struct bio *bio)
 	bio_endio(bio);
 }
 
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+static void zram_bio_write_callback(void *mem, struct bio *bio)
+{
+	struct zram *zram = (struct zram *)mem;
+
+	__zram_make_request(zram, bio);
+}
+#endif
+
+
 /*
  * Handler function for all zram I/O requests.
  */
@@ -2230,6 +2259,19 @@ static void zram_submit_bio(struct bio *bio)
 		bio_io_error(bio);
 		return;
 	}
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	if(!is_chp_zram(zram)) {
+#endif
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+	if(bio_op(bio) == REQ_OP_WRITE)
+		if (kcompressd_enabled() && !schedule_bio_write(zram, bio, zram_bio_write_callback))
+			return;
+#endif
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	}
+#endif
 
 	__zram_make_request(zram, bio);
 }
@@ -2298,6 +2340,11 @@ static int zram_rw_page(struct block_device *bdev, sector_t sector,
 		}
 		#endif
 	} else {
+#endif
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+		/*fallback to async io for compress in kcompressd*/
+		if(should_fallback_to_submit_bio(page, op))
+			return -EBUSY;
 #endif
 		if (PageTransHuge(page))
 			return -ENOTSUPP;
@@ -2919,6 +2966,10 @@ static int __init zram_init(void)
 	pr_info("chp_supported:%d chp_pool:%d", chp_supported, !!chp_pool);
 #endif
 
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+	kcompressd_init();
+#endif
+
 	while (num_devices != 0) {
 		mutex_lock(&zram_index_mutex);
 		ret = zram_add(inx++);
@@ -2956,6 +3007,9 @@ static void __exit zram_exit(void)
 	zcomp_destroy_thp_zstrm_buffer();
 #endif
 
+#if IS_ENABLED(CONFIG_KCOMPRESSD)
+	kcompressd_exit();
+#endif
 	destroy_devices();
 }
 

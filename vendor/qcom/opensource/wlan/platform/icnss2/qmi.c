@@ -1083,12 +1083,16 @@ void icnss_dms_deinit(struct icnss_priv *priv)
 #ifdef OPLUS_FEATURE_WIFI_BDF
 //Modify for: multi projects using different bdf
 static bool is_prj_support_region_id(void) {
-    int project_id = get_project();
-    icnss_pr_dbg("the project support region id is: %d\n", project_id);
-    if (project_id == 24211 || project_id == 24212) {
-        return true;
-    }
-    return false;
+	int project_id = get_project();
+	icnss_pr_info("the project support region id is: %d\n", project_id);
+	if (project_id == 24211 || project_id == 24212) {
+		return true;
+	} else if (project_id == 24882 || project_id == 24881) {
+		return true;
+	} else if (project_id == 25861) {
+		return true;
+	}
+	return false;
 }
 
 static bool is_prj_support_region_nv_id(void) {
@@ -1288,7 +1292,7 @@ int icnss_wlfw_bdf_dnld_send_sync(struct icnss_priv *priv, u32 bdf_type)
 	}
 #endif /* OPLUS_FEATURE_WIFI_DCS_SWITCH */
 
-	icnss_pr_dbg("Downloading %s: %s, size: %u\n",
+	icnss_pr_info("Downloading %s: %s, size: %u\n",
 		     icnss_bdf_type_to_str(bdf_type), filename, remaining);
 
 	while (remaining) {

@@ -122,6 +122,10 @@ enum hybridswap_stage {
 enum hybridswap_memcg_member {
 	MCG_ZRAM_STORED_SZ = 0,
 	MCG_ZRAM_STORED_PG_SZ,
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	MCG_ZRAM_CHP_STORED_SZ,
+	MCG_ZRAM_CHP_STORED_PG_SZ,
+#endif
 	MCG_DISK_STORED_SZ,
 	MCG_DISK_STORED_PG_SZ,
 	MCG_ANON_FAULT_CNT,
@@ -235,6 +239,10 @@ struct hybridswap_stat {
 	atomic64_t reout_bytes;
 	atomic64_t zram_stored_pages;
 	atomic64_t zram_stored_size;
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	atomic64_t zram_chp_stored_pages;
+	atomic64_t zram_chp_stored_size;
+#endif
 	atomic64_t stored_pages;
 	atomic64_t stored_size;
 	atomic64_t notify_free;
@@ -353,6 +361,9 @@ typedef struct mem_cgroup_hybridswap {
 	struct list_head score_node;
 	char name[MEM_CGROUP_NAME_MAX_LEN];
 	struct zram *zram;
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	struct zram *chp_zram;
+#endif
 	struct mem_cgroup *memcg;
 	refcount_t usage;
 #endif
@@ -371,6 +382,10 @@ typedef struct mem_cgroup_hybridswap {
 
 	atomic64_t zram_stored_size;
 	atomic64_t zram_page_size;
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	atomic64_t zram_chp_stored_size;
+	atomic64_t zram_chp_page_size;
+#endif
 	unsigned long zram_watermark;
 
 	atomic_t hybridswap_extcnt;
@@ -520,7 +535,10 @@ extern void memcg_app_score_resort(void);
 extern unsigned long memcg_anon_pages(struct mem_cgroup *memcg);
 
 #ifdef CONFIG_HYBRIDSWAP_CORE
+#define NANDSWAPV2 "/dev/block/by-name/hybridswap"
+#define NANDSWAPV2_CRYPTO "/dev/block/mapper/hybridswap_crypto"
 extern bool hybridswap_core_enabled(void);
+extern bool nandswapV2_supported(void);
 extern bool hybridswap_reclaim_in_enable(void);
 extern void hybridswap_mem_cgroup_deinit(struct mem_cgroup *memcg);
 extern unsigned long hybridswap_reclaim_in(unsigned long size);
@@ -531,7 +549,7 @@ extern unsigned long zram_zsmalloc(struct zs_pool *zs_pool,
 extern struct task_struct *get_task_from_proc(struct inode *inode);
 extern unsigned long long hybridswap_read_zram_pagefault(void);
 extern bool is_hybridswap_reclaim_work_running(void);
-extern void hybridswap_force_reclaim(struct mem_cgroup *mcg);
+extern void hybridswap_force_reclaim(struct mem_cgroup *mcg, s64 val);
 extern bool hybridswap_stored_wm_ok(void);
 extern void mem_cgroup_id_remove_hook(void *data, struct mem_cgroup *memcg);
 extern int mem_cgroup_stored_wm_ratio_write(

@@ -29,6 +29,7 @@
 #include <linux/syscalls.h>
 #include <linux/input/mt.h>
 #include <linux/string.h>
+#include <linux/platform_device.h>
 
 #if IS_ENABLED(CONFIG_OPLUS_MAGCVR_NOTIFY)
 #include "magtransfer/magcvr_notify.h"
@@ -116,6 +117,7 @@ bool debug_enable = 0;
 
 enum M_IRQ_TYPE {
 	EDGE_DOWN = 2,
+	EDGE_DOUBLE = 4,
 	LOW_LEVEL = 8,
 };
 
@@ -313,6 +315,7 @@ struct magnetic_cover_info {
 	int cal_offset[CAL_OFFSET_MAX_CNT];
 	int cal_offset_cnt;
 	bool init_chip_failed;
+	bool no_need_calibration;
 	// fault injection opt
 	unsigned short fault_injection_opt;
 	int fault_injection_state;

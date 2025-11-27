@@ -50,6 +50,7 @@ int frame_info_init(void);
 bool is_fbg(int grp_id);
 bool is_multi_frame_fbg(int grp_id);
 bool is_active_multi_frame_fbg(int grp_id);
+int set_static_fbg(int grp_id);
 int alloc_multi_fbg(void);
 void release_multi_fbg(int grp_id);
 

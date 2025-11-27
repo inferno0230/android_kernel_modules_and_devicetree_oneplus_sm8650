@@ -23,6 +23,7 @@ do { \
 #define preempt_enable_no_resched() sched_preempt_enable_no_resched()
 
 #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
 
 #include "locking_main.h"
 
@@ -47,13 +48,14 @@ module_param(futex_set_blocked_ux_cnt, long, 0444);
 #define INHERIT_INC (2)
 static int futex_set_inherit_ux_refs(struct task_struct *holder, struct task_struct *p)
 {
-	bool set_ux;
+	bool set_ux = false, is_rt = false;
 
 	if (unlikely(!holder || !p))
 		return 0;
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	set_ux = (test_set_inherit_ux(p) || test_task_is_rt(p));
+	is_rt = test_task_is_rt(p);
+	set_ux = (test_set_inherit_ux(p) || is_rt);
 #else
 	set_ux = false;
 #endif
@@ -65,11 +67,17 @@ static int futex_set_inherit_ux_refs(struct task_struct *holder, struct task_str
 		if (unlikely(IS_ERR_OR_NULL(ots)))
 			return 0;
 
-		if (type == UX_STATE_NONE) {
+		if (type == UX_STATE_NONE || type == UX_STATE_STATIC) {
 			if (holder->__state & TASK_NORMAL)
 				atomic_long_inc((atomic_long_t*)&futex_set_blocked_ux_cnt);
 
-			set_inherit_ux(holder, INHERIT_UX_FUTEX, ots->ux_depth, ots->ux_state);
+			if (is_rt) {
+				set_inherit_ux(holder, INHERIT_UX_FUTEX, ots->ux_depth, SA_TYPE_LIGHT);
+			}
+			else {
+				set_inherit_ux(holder, INHERIT_UX_FUTEX, ots->ux_depth, ots->ux_state);
+			}
+
 			atomic_long_inc((atomic_long_t*)&futex_ux_set_cnt);
 			cond_trace_printk(locking_opt_debug(LK_DEBUG_FTRACE),
 				"INHERIT_SET-holder(%-12s pid=%d tgid=%d inherit_ux=%llx) p=(%-12s pid=%d tgid=%d)\n",
@@ -77,7 +85,7 @@ static int futex_set_inherit_ux_refs(struct task_struct *holder, struct task_str
 				p->comm, p->pid, p->tgid);
 
 			return INHERIT_SET;
-		} else if (type == UX_STATE_INHERIT) {
+		} else if (type == UX_STATE_INHERIT || type == UX_STATE_COMBINED) {
 			if (holder->__state & TASK_NORMAL)
 				atomic_long_inc((atomic_long_t*)&futex_set_blocked_ux_cnt);
 
@@ -160,6 +168,15 @@ static bool boost_holder(struct task_struct *holder, struct task_struct *waiter)
 	if (unlikely(!locking_opt_enable(LK_FUTEX_ENABLE)))
 		return false;
 
+	/* when runing to "retry" in futex_wait, we don't need to boost holder again.
+	 */
+	if (ots->lkinfo.ux_contrib) {
+		cond_trace_printk(locking_opt_debug(LK_DEBUG_FTRACE),
+			"retry path futex holder comm=%-12s pid=%d tgid=%d ux_state=%d\n",
+			holder->comm, holder->pid, holder->tgid,
+			oplus_get_ux_state(holder));
+		return true;
+	}
 	/*
 	 * If current(ux thread) upgrade it's holder to inherit ux successfully,
 	 * mark ux_contrib as true(Ya, we have contributed an inherit ux thread).
@@ -271,25 +288,18 @@ extern int thread_info_ctrl;
 
 static int get_lock_stats_grp_idx(struct task_struct *task)
 {
-	struct cgroup_subsys_state *css;
 	int ret = U_GRP_OTHER;
 
-	rcu_read_lock();
-	css = task_css(task, cpu_cgrp_id);
-
-	if (!css) {
-		ret = U_GRP_OTHER;
-	} else if (css->id == CGROUP_TOP_APP) {
+	if (ta_task(task)) {
 		ret = U_GRP_TOP_APP;
-	} else if (css->id == CGROUP_FOREGROUND) {
+	} else if (fg_task(task)) {
 		ret = U_GRP_FRONDGROUD;
-	} else if (css->id == CGROUP_BACKGROUND) {
+	} else if (bg_task(task)) {
 		ret = U_GRP_BACKGROUND;
 	} else {
 		ret = U_GRP_OTHER;
 	}
 
-	rcu_read_unlock();
 	return ret;
 }
 
@@ -297,7 +307,7 @@ static inline bool curr_is_ux_thread_nolimit(void)
 {
 	int state = get_ux_state_type(current);
 
-	return (state == UX_STATE_INHERIT) || (state == UX_STATE_SCHED_ASSIST);
+	return (state == UX_STATE_INHERIT) || (state == UX_STATE_STATIC) || (state == UX_STATE_COMBINED);
 }
 
 static void android_vh_do_futex_handler(void *unused, int cmd,

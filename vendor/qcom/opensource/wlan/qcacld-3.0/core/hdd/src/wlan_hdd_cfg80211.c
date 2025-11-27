@@ -5880,6 +5880,11 @@ roam_control_policy[QCA_ATTR_ROAM_CONTROL_MAX + 1] = {
 	[QCA_ATTR_ROAM_CONTROL_FULL_SCAN_6GHZ_ONLY_ON_PRIOR_DISCOVERY] = {
 			.type = NLA_U8},
 	[QCA_ATTR_ROAM_CONTROL_CONNECTED_HIGH_RSSI_OFFSET] = {.type = NLA_U8},
+#ifdef OPLUS_BUG_STABILITY
+	// OPLUS command to config roaming params
+	[OPLUS_ATTR_ROAM_CONTROL_BAD_RSSI_2G_OFFSET] = {.type = NLA_U32},
+	[OPLUS_ATTR_ROAM_CONTROL_PER_ENABLE] = {.type = NLA_U32},
+#endif /* OPLUS_BUG_STABILITY */
 };
 
 /**
@@ -6681,6 +6686,60 @@ hdd_set_roam_with_control_config(struct hdd_context *hdd_ctx,
 			hdd_err("Fail to set roam scan high RSSI offset for vdev %d",
 				vdev_id);
 	}
+
+#ifdef OPLUS_BUG_STABILITY
+	// OPLUS command to config roaming params
+	attr = tb2[OPLUS_ATTR_ROAM_CONTROL_BAD_RSSI_2G_OFFSET];
+	if (attr) {
+		value = nla_get_u32(attr);
+		if (!cfg_in_range(CFG_LFR_ROAM_BG_SCAN_BAD_RSSI_OFFSET_2G, value)) {
+			hdd_err("Bad RSSI offset 2G value %d is out of range",
+				value);
+			return -EINVAL;
+		}
+
+		hdd_debug("%s roam Bad RSSI offset 2G: %d for vdev %d",
+			  value ? "Enable" : "Disable", value, vdev_id);
+
+		if (!value &&
+		    !wlan_cm_get_roam_bad_rssi_offset_2G(hdd_ctx->psoc)) {
+			hdd_debug("Roam Bad RSSI offset 2G is already disabled");
+			return -EINVAL;
+		}
+
+		status = ucfg_cm_set_roam_bad_rssi_offset_2G(hdd_ctx->psoc,
+								vdev_id, value);
+		if (QDF_IS_STATUS_ERROR(status))
+			hdd_err("Fail to set roam Bad RSSI offset 2G for vdev %d",
+				vdev_id);
+	}
+
+	attr = tb2[OPLUS_ATTR_ROAM_CONTROL_PER_ENABLE];
+	if (attr) {
+		value = nla_get_u32(attr);
+		if (!cfg_in_range(CFG_LFR_PER_ROAM_ENABLE, value)) {
+			hdd_err("Per enable value %d is out of range",
+				value);
+			return -EINVAL;
+		}
+
+		hdd_debug("%s per enable: %d for vdev %d",
+			  value ? "Enable" : "Disable", value, vdev_id);
+
+		if (!value &&
+		    !wlan_cm_get_roam_per_enable(hdd_ctx->psoc)) {
+			hdd_debug("Roam PER Enable is already disabled");
+			return -EINVAL;
+		}
+
+		status = ucfg_cm_set_roam_per_enable(hdd_ctx->psoc,
+								vdev_id, value);
+		if (QDF_IS_STATUS_ERROR(status))
+			hdd_err("Fail to set roam PER enable for vdev %d",
+				vdev_id);
+	}
+
+#endif /* OPLUS_BUG_STABILITY */
 
 	return qdf_status_to_os_return(status);
 }
@@ -12121,12 +12180,18 @@ static int hdd_set_btm_support_config(struct wlan_hdd_link_info *link_info,
 		  link_info->vdev_id, cfg_val, op_mode,
 		  is_vdev_in_conn_state);
 
+#ifdef OPLUS_BUG_STABILITY
+	// OPLUS command to config roaming params
+	if (op_mode != QDF_STA_MODE)
+		return -EINVAL;
+#else
 	/*
 	 * Change in BTM support configuration is applicable only for STA
 	 * interface and not allowed in connected state.
 	 */
 	if (op_mode != QDF_STA_MODE || is_vdev_in_conn_state)
 		return -EINVAL;
+#endif /* OPLUS_BUG_STABILITY */
 
 	switch (cfg_val) {
 	case QCA_WLAN_BTM_SUPPORT_DISABLE:

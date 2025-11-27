@@ -29,6 +29,8 @@ static int __init oplus_eas_opt_init(void)
 	}
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	register_oplus_cap_vendor_hooks();
+
 	ret = oplus_cap_init(eas_opt_dir);
 	if (ret != 0)
 		return ret;

@@ -12,7 +12,7 @@ def define_oplus_local_modules():
         ]),
         includes = ["."],
         ko_deps = [],
-        local_defines = [],
+        local_defines = ["CFG_OPLUS_ARCH_IS_MTK"],
     )
 
     ddk_copy_to_dist_dir(

@@ -34,4 +34,13 @@
 #define UNREGISTER_TRACE_RVH(vender_hook, handler)
 #endif
 
+typedef void (*wake_up_new_task_handler_t)(struct task_struct *p);
+void register_wake_up_new_task_ext_handler(wake_up_new_task_handler_t ext_handler);
+
+#define OPLUS_UX_HOOK_ENQUEUE (0x01)
+#define OPLUS_UX_HOOK_DEQUEUE (0x02)
+#define OPLUS_UX_HOOK_MASK    (OPLUS_UX_HOOK_ENQUEUE|OPLUS_UX_HOOK_DEQUEUE)
+
+void enable_sched_assist(int step);
+
 #endif /* _OPLUS_SCHED_ASSIST_H_ */

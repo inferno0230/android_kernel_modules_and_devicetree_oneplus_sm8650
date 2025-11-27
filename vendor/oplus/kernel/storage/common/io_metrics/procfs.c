@@ -27,6 +27,9 @@ static char label_buf[LABEL_BUF_LEN] = {"common"};
 static struct proc_dir_entry *storage_procfs;
 static struct proc_dir_entry *io_metrics_procfs;
 static struct proc_dir_entry *io_metrics_control_procfs;
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+static struct proc_dir_entry *ioLatencyStat_procfs;
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 static struct proc_dir_entry *sample_dir[CYCLE_MAX] = {0};
 
 struct sample_cycle sample_cycle_config[] = {
@@ -78,6 +81,14 @@ static const struct proc_ops ufs_metrics_proc_fops = {
     .proc_lseek     = seq_lseek,
     .proc_release   = single_release,
 };
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+static const struct proc_ops ioLatencyStat_proc_fops = {
+    .proc_open      = ioLatencyStat_proc_open,
+    .proc_read      = seq_read,
+    .proc_lseek     = seq_lseek,
+    .proc_release   = single_release,
+};
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 #else
 #define DEFINE_IO_METRICS_CONTROL(__name)                           \
 static int __name ## _open(struct inode *inode, struct file *file)  \
@@ -113,6 +124,14 @@ static const struct file_operations ufs_metrics_proc_fops = {
     .llseek     = seq_lseek,
     .release   = single_release,
 };
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+static const struct file_operations ioLatencyStat_proc_fops = {
+    .proc_open      = ioLatencyStat_proc_open,
+    .proc_read      = seq_read,
+    .proc_lseek     = seq_lseek,
+    .proc_release   = single_release,
+};
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 #endif
 
 static int io_metrics_control_show(struct seq_file *seq_filp, void *data)
@@ -416,6 +435,10 @@ int io_metrics_procfs_init(void)
         io_metrics_print("Can't create procfs node\n");
         goto error_out;
     }
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+    ioLatencyStat_procfs = proc_create_data("ioLatencyStat", S_IRUGO, io_metrics_procfs,
+                    &ioLatencyStat_proc_fops, NULL);
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
     /* /proc/oplus_storage/io_metrics/control */
     io_metrics_control_procfs = proc_mkdir(IO_METRICS_CONTROL_DIR_NODE, io_metrics_procfs);
     if (!io_metrics_control_procfs) {

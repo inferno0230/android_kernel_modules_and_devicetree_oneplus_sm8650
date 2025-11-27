@@ -1,6 +1,11 @@
 #ifndef __TUNE_H__
 #define __TUNE_H__
 
+#ifdef pr_fmt
+#undef pr_fmt
+#endif
+
+#define pr_fmt(fmt) "schedtune: " fmt
 
 /*
  * Maximum number of boost groups to support
@@ -13,11 +18,13 @@
  *    implementation especially for the computation of the per-CPU boost
  *    value
  */
-#define BOOSTGROUPS_COUNT               (20)
+#define BOOSTGROUPS_COUNT               (30)
 
 /* We hold schedtune boost in effect for at least this long */
 #define SCHEDTUNE_BOOST_HOLD_NS         50000000ULL
 
+#define QOS_SCHED_TUNE_DEFAULT (-101)
+#define QOS_SCHED_TUNE_RESET (0)
 
 /* SchdTune tunables for a group of tasks */
 struct schedtune {
@@ -67,6 +74,5 @@ noinline unsigned long  stune_util(int cpu, unsigned long other_util,
 		 unsigned long util);
 void schedtune_enqueue_task(struct task_struct *p, int cpu);
 void schedtune_dequeue_task(struct task_struct *p, int cpu);
-
+int schedtune_task_boost(struct task_struct *p);
 #endif
-

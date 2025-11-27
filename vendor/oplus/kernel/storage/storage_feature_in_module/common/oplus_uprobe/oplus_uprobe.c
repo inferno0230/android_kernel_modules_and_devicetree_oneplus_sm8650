@@ -327,7 +327,7 @@ process_fetch_insn(struct fetch_insn *code, void *rec, void *dest,
 	unsigned long long val;
 	unsigned long long comp_val;
 	unsigned long long set_val;
-	unsigned int offset;
+	int offset;
 	char *reg;
 	char *reg_val;
 	int ret;
@@ -407,18 +407,17 @@ process_fetch_insn(struct fetch_insn *code, void *rec, void *dest,
 			return -EINVAL;
 		}
 
-		offset = (unsigned int)oplus_regs_query_register_offset(reg);
+		offset = oplus_regs_query_register_offset(reg);
+		pr_storage(OPLUS_UPROBE_LOG_TAG"oplus_parse_arg 2 reg(%s) offset(%d) regval(0x%llx)\n", reg, offset, set_val);
 		if (offset < 0) {
-			pr_storage(OPLUS_UPROBE_LOG_TAG"oplus_parse_arg 2 reg(%s) offset(%d) regval(0x%llx)\n", reg, offset, set_val);
-			pr_err(OPLUS_UPROBE_LOG_TAG "parse register failed\n");
 			kfree(reg_string);
+			pr_err(OPLUS_UPROBE_LOG_TAG "parse register failed\n");
 			return -EINVAL;
-		} else if (offset >= 0) {
-			offset >>= 3;
-			pt_regs_write_reg(regs, offset, (unsigned long)set_val);
-			pr_storage(OPLUS_UPROBE_LOG_TAG "FETCH_OP_MOD_BF offset(%d) set_val(0x%llx)\n", offset, set_val);
 		}
 
+		offset >>= 3;
+		pr_storage(OPLUS_UPROBE_LOG_TAG "FETCH_OP_MOD_BF offset(%d) set_val(0x%llx)\n", offset, set_val);
+		pt_regs_write_reg(regs, offset, (unsigned long)set_val);
 		kfree(reg_string);
 		break;
 	case FETCH_OP_DATA:
@@ -891,9 +890,17 @@ static struct oplus_uprobe* parse_uprobe_cmd(int argc, char **argv)
 	ou->offset = offset;
 	ou->path = path;
 	ou->filename = filename;
+        ou->raw_cmd = kmalloc(WRITE_BUFSIZE, GFP_KERNEL);
+	if (!ou->raw_cmd) {
+            pr_err(OPLUS_UPROBE_LOG_TAG "alloc raw_cmd buffer fail\n");
+	    goto err;
+	}
 	return ou;
 
 err:
+         if (ou && ou->raw_cmd)
+		kfree(ou->raw_cmd);
+
 	if (ou)
 		kfree(ou);
 
@@ -1017,6 +1024,7 @@ static ssize_t oplus_uprobe_proc_write(struct file *file, const char __user *buf
 			    size_t count, loff_t *ppos)
 {
 	char *kbuf = NULL;
+        const char *buf = NULL;
 	int argc = 0;
 	char **argv = NULL;
 	struct oplus_uprobe *ou = NULL;
@@ -1039,7 +1047,8 @@ static ssize_t oplus_uprobe_proc_write(struct file *file, const char __user *buf
 
 	kbuf[count] = '\0';
 
-	argv = argv_split(GFP_KERNEL, kbuf, &argc);
+        buf = kbuf;
+	argv = argv_split(GFP_KERNEL, buf, &argc);
 	if (!argv) {
 		pr_err(OPLUS_UPROBE_LOG_TAG "argv_split fail\n");
 		goto err;
@@ -1061,7 +1070,11 @@ static ssize_t oplus_uprobe_proc_write(struct file *file, const char __user *buf
 		pr_err(OPLUS_UPROBE_LOG_TAG "parse_uprobe_cmd fail\n");
 		goto err;
 	}
-	ou->raw_cmd = kbuf;
+
+        if (ou->raw_cmd != NULL) {
+            strncpy(ou->raw_cmd, kbuf, WRITE_BUFSIZE);
+	    ou->raw_cmd[WRITE_BUFSIZE-1] = '\0';
+        }
 	INIT_LIST_HEAD(&ou->head);
 
 	down_write(&oplus_event_sem);
@@ -1090,6 +1103,7 @@ static ssize_t oplus_uprobe_proc_write(struct file *file, const char __user *buf
 	atomic_inc(&uprobe_count);
 out:
 	argv_free(argv);
+        kfree(kbuf);
 	pr_storage(OPLUS_UPROBE_LOG_TAG "proc write succeed\n");
 	return count;
 
@@ -1101,6 +1115,12 @@ err:
 	if (argv) {
 		argv_free(argv);
 	}
+
+        if (ou && ou->filename)
+		kfree(ou->filename);
+
+        if (ou && ou->raw_cmd)
+		kfree(ou->raw_cmd);
 
 	if (ou) {
 		kfree(ou);

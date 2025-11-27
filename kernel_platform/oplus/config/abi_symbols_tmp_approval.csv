@@ -22,6 +22,7 @@ __qdisc_calculate_pkt_len, 80393944
 qdisc_tree_reduce_backlog, 80393944
 qdisc_put, 80393944
 gnet_stats_copy_queue, 80393944
+schedtune_task_boost, 80398427
 tcf_block_get, 80393944
 tcf_block_put, 80393944
 tcf_classify, 80393944

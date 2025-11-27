@@ -28,6 +28,10 @@
 #include "sa_pipeline.h"
 #endif
 
+#ifdef CONFIG_OPLUS_SCHED_GROUP_OPT
+#include "sa_group.h"
+#endif
+
 #define OPLUS_SCHEDULER_PROC_DIR		"oplus_scheduler"
 #define OPLUS_SCHEDASSIST_PROC_DIR		"sched_assist"
 
@@ -46,6 +50,9 @@ int global_sched_assist_scene;
 EXPORT_SYMBOL(global_sched_assist_scene);
 int global_lowend_plat_opt;
 EXPORT_SYMBOL(global_lowend_plat_opt);
+
+int global_sched_disable_camera_ux = 0;
+EXPORT_SYMBOL(global_sched_disable_camera_ux);
 
 pid_t global_ux_task_pid = -1;
 pid_t global_im_flag_pid = -1;
@@ -139,6 +146,41 @@ static ssize_t proc_sched_assist_enabled_read(struct file *file, char __user *bu
 	size_t len = 0;
 
 	len = snprintf(buffer, sizeof(buffer), "enabled=%d\n", global_sched_assist_enabled);
+
+	return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t proc_sched_disable_camera_ux_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	int err, val;
+
+	memset(buffer, 0, sizeof(buffer));
+
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+
+	buffer[count] = '\0';
+	err = kstrtoint(strstrip(buffer), 10, &val);
+	if (err)
+		return err;
+
+	global_sched_disable_camera_ux = val;
+
+	return count;
+}
+
+static ssize_t proc_sched_disable_camera_ux_read(struct file *file, char __user *buf,
+		size_t count, loff_t *ppos)
+{
+	char buffer[20];
+	size_t len = 0;
+
+	len = snprintf(buffer, sizeof(buffer), "disable=%d\n", global_sched_disable_camera_ux);
 
 	return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
@@ -268,39 +310,38 @@ static ssize_t proc_ux_task_write(struct file *file, const char __user *buf,
 			rcu_read_unlock();
 
 			if (ux_task) {
+				int ux_original;
+				bool need_update = true;
+
 				if (im_mali(ux_task->comm)) {
 					put_task_struct(ux_task);
 					return -EFAULT;
 				}
-				ux_orig = oplus_get_ux_state(ux_task);
-
-				if ((ux_state & SA_OPT_SET) && oplus_get_inherit_ux(ux_task)) {
-					clear_all_inherit_type(ux_task);
-					ux_orig = 0;
-				}
+				ux_orig = oplus_get_static_ux_state(ux_task);
+				ux_original = ux_orig;
 
 				if (ux_state == SA_OPT_CLEAR) { /* clear all ux type but animator type */
 					if (ux_orig & SA_TYPE_ANIMATOR)
 						ux_orig &= SA_TYPE_ANIMATOR;
 					else
 						ux_orig = 0;
-					oplus_set_ux_state_lock(ux_task, ux_orig, -1, true);
 				} else if (ux_state & SA_OPT_SET) { /* set target ux type and clear set opt */
 					if (ux_state & SA_OPT_SET_PRIORITY) {
 						ux_orig &= ~(SCHED_ASSIST_UX_PRIORITY_MASK);
 					}
 					ux_orig |= ux_state & ~(SA_OPT_SET|SA_OPT_SET_PRIORITY);
-					oplus_set_ux_state_lock(ux_task, ux_orig, -1, true);
 				} else if (ux_orig & ux_state) { /* reset target ux type */
 					ux_orig &= ~ux_state;
-					/* if ux_state->0 after clear ux bit, and it is inherited, should keep it */
-					if (!(ux_orig & SCHED_ASSIST_UX_MASK) && (ux_orig & SA_TYPE_INHERIT)) {
-						/* do nothing */
-					} else {
-						oplus_set_ux_state_lock(ux_task, ux_orig, -1, true);
-					}
+				} else {
+					need_update = false;
 				}
-
+				if (need_update) {
+					/* only audio itself can clean swift type */
+					if (ux_original & SA_TYPE_SWIFT) {
+						ux_orig |= SA_TYPE_SWIFT;
+					}
+					oplus_set_ux_state_lock(ux_task, ux_orig, -1, true);
+				}
 				put_task_struct(ux_task);
 			}
 		}
@@ -328,14 +369,15 @@ static ssize_t proc_ux_task_read(struct file *file, char __user *buf,
 		if (IS_ERR_OR_NULL(ots)) {
 			len = snprintf(buffer, sizeof(buffer), "Ots is null\n");
 		} else {
-			len = snprintf(buffer, sizeof(buffer), "comm=%s pid=%d tgid=%d ux_state=0x%08x ux_prio=%d ux_nice=%d inherit=%llx(bi:%d rw:%d mu:%d) im_flag=0x%08lx\n",
-				task->comm, task->pid, task->tgid, ots->ux_state, ots->ux_priority, ots->ux_nice, oplus_get_inherit_ux(task),
+			len = snprintf(buffer, sizeof(buffer),
+			    "comm=%s pid=%d tgid=%d ux_state=0x%08x sub_ux=0x%08x ux_prio=%d ux_nice=%d inherit=%llx(bi:%d rw:%d mu:%d) im_flag=0x%08lx\n",
+				task->comm, task->pid, task->tgid, ots->ux_state, ots->sub_ux_state, ots->ux_priority, ots->ux_nice, oplus_get_inherit_ux(task),
 				test_inherit_ux(task, INHERIT_UX_BINDER), test_inherit_ux(task, INHERIT_UX_RWSEM), test_inherit_ux(task, INHERIT_UX_MUTEX),
 				ots->im_flag);
 		}
 		put_task_struct(task);
 	} else
-		len = snprintf(buffer, sizeof(buffer), "Can not find task\n");
+		len = snprintf(buffer, sizeof(buffer), "Task not found\n");
 
 	return simple_read_from_buffer(buf, count, ppos, buffer, len);
 }
@@ -368,7 +410,7 @@ static int read_task_ux(pid_t pid, pid_t tid, bool fromSysOrApp)
 				}
 
 				if (verified) {
-					ret = ots->ux_state;
+					ret = oplus_get_ux_state(task);
 				} else {
 					ret = -EPERM;
 				}
@@ -383,8 +425,7 @@ static int read_task_ux(pid_t pid, pid_t tid, bool fromSysOrApp)
 	return ret;
 }
 
-static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
-{
+long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp) {
 	long ret = -1;
 	struct task_struct *ux_task, *task;
 	int ux_orig;
@@ -419,7 +460,7 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 				}
 
 				if (verified) {
-					ux_orig = ots->ux_state;
+					ux_orig = oplus_get_static_ux_state(task);
 					ux_task = task;
 					get_task_struct(ux_task);
 				} else {
@@ -437,15 +478,11 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 	if (ux_task) {
 		bool need_update = true;
 		int ux_state = -1;
+		int ux_original = ux_orig;
 
 		if (im_mali(ux_task->comm)) {
 			put_task_struct(ux_task);
 			return -EPERM;
-		}
-
-		/* clear inherit type if ux is intentional set */
-		if ((ux_value & (SA_OPT_SET|SA_OPT_RESET)) && oplus_get_inherit_ux(ux_task)) {
-			clear_all_inherit_type(ux_task);
 		}
 
 		if ((ux_value & (SA_OPT_RESET|SA_OPT_SET_PRIORITY)) == (SA_OPT_RESET|SA_OPT_SET_PRIORITY)) {
@@ -457,10 +494,8 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 			ux_state = (ux_value & SCHED_ASSIST_UX_MASK) | ux_orig;
 		} else if ((ux_value & (SA_OPT_SET|SA_OPT_SET_PRIORITY)) == (SA_OPT_SET|SA_OPT_SET_PRIORITY)) {
 			if ((ux_value & SCHED_ASSIST_UX_MASK) == SA_OPT_CLEAR) {
-				/* clear all ux type but animator type */
+				/* clear all ux type */
 				ux_state = ux_value & SCHED_ASSIST_UX_PRIORITY_MASK;
-				ux_orig &= SA_TYPE_ANIMATOR;
-				ux_state |= ux_orig;
 			} else {
 				/* union two ux type bit */
 				ux_state = ux_value & (SCHED_ASSIST_UX_PRIORITY_MASK|SCHED_ASSIST_UX_MASK);
@@ -469,8 +504,8 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 			}
 		} else if (ux_value & SA_OPT_SET) {
 			if ((ux_value & SCHED_ASSIST_UX_MASK) == SA_OPT_CLEAR) {
-				/* clear all ux type but animator type */
-				ux_state = ux_orig & (SCHED_ASSIST_UX_PRIORITY_MASK|SA_TYPE_ANIMATOR);
+				/* clear all ux type */
+				ux_state = ux_orig & SCHED_ASSIST_UX_PRIORITY_MASK;
 			} else {
 				/* union two ux type bit */
 				ux_state = ux_value & SCHED_ASSIST_UX_MASK;
@@ -488,20 +523,20 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 			}
 		} else {
 			if ((ux_value & SCHED_ASSIST_UX_MASK) == SA_OPT_CLEAR) {
-				/* clear all ux type but animator type */
-				ux_state = ux_orig & (SCHED_ASSIST_UX_PRIORITY_MASK|SA_TYPE_ANIMATOR);
+				/* clear all ux type */
+				ux_state = ux_orig & SCHED_ASSIST_UX_PRIORITY_MASK;
 			} else {
 				/* reset target ux type bit */
 				ux_value = ~(ux_value & SCHED_ASSIST_UX_MASK);
 				ux_state = ux_orig & (SCHED_ASSIST_UX_PRIORITY_MASK|ux_value);
 			}
-			/* if ux_state->0 after clear ux bit, and it is inherited, should keep it */
-			if (!(ux_state & SCHED_ASSIST_UX_MASK) && (ux_orig & SA_TYPE_INHERIT)) {
-				need_update = false;
-			}
 		}
 
 		if (need_update) {
+			/* only audio itself can clean swift type */
+			if (ux_original & SA_TYPE_SWIFT) {
+				ux_state |= SA_TYPE_SWIFT;
+			}
 			oplus_set_ux_state_lock(ux_task, ux_state, -1, true);
 		}
 
@@ -511,6 +546,7 @@ static long write_task_ux(pid_t pid, pid_t tid, int ux_value, bool fromSysOrApp)
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(write_task_ux);
 
 static long proc_ux_task_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
@@ -627,7 +663,7 @@ static int im_flag_set_handle(struct task_struct *task, int im_flag)
 #endif
 
 	if (test_bit(IM_FLAG_LAUNCHER_NON_UX_RENDER, &ots->im_flag)) {
-		int ux_state = oplus_get_ux_state(task);
+		int ux_state = oplus_get_static_ux_state(task);
 
 		oplus_set_ux_state_lock(task, ux_state | SA_TYPE_HEAVY, -1, true);
 	}
@@ -1081,6 +1117,12 @@ static const struct proc_ops proc_sched_assist_enabled_fops = {
 	.proc_lseek		= default_llseek,
 };
 
+static const struct proc_ops proc_sched_disable_camera_ux_fops = {
+	.proc_write		= proc_sched_disable_camera_ux_write,
+	.proc_read		= proc_sched_disable_camera_ux_read,
+	.proc_lseek		= default_llseek,
+};
+
 static const struct proc_ops proc_sched_assist_scene_fops = {
 	.proc_write		= proc_sched_assist_scene_write,
 	.proc_read		= proc_sched_assist_scene_read,
@@ -1247,16 +1289,24 @@ int oplus_sched_assist_proc_init(void)
 		remove_proc_entry("nr_switches", d_sched_assist);
 	}
 #endif
-
 	proc_node = proc_create("lowend_plat_opt", 0666, d_sched_assist, &proc_lowend_plat_opt_fops);
 	if (!proc_node) {
 		ux_err("failed to create proc node lowend_plat_opt\n");
 		remove_proc_entry("lowend_plat_opt", d_sched_assist);
 	}
+	proc_node = proc_create("sched_disable_camera_ux", 0666, d_sched_assist, &proc_sched_disable_camera_ux_fops);
+	if (!proc_node) {
+		ux_err("failed to create proc node sched_disable_camera_ux\n");
+		goto err_creat_sched_disable_camera_ux;
+	}
 
 	device_node = of_find_compatible_node(NULL, NULL, "oplus,sched_assit");
 	if (device_node)
 		disable_setting = 0;
+
+#ifdef CONFIG_OPLUS_SCHED_GROUP_OPT
+	oplus_sched_group_init(d_sched_assist);
+#endif
 
 #ifdef CONFIG_OPLUS_CPU_AUDIO_PERF
 	oplus_sched_assist_audio_proc_init(d_sched_assist);
@@ -1277,6 +1327,9 @@ err_creat_ux_task:
 
 err_creat_sched_assist_scene:
 	remove_proc_entry("sched_assist_enabled", d_sched_assist);
+
+err_creat_sched_disable_camera_ux:
+	remove_proc_entry("sched_disable_camera_ux", d_sched_assist);
 
 err_creat_sched_assist_enabled:
 	remove_proc_entry("debug_enabled", d_sched_assist);
@@ -1300,6 +1353,7 @@ void oplus_sched_assist_proc_deinit(void)
 	remove_proc_entry("ux_task", d_sched_assist);
 	remove_proc_entry("sched_assist_scene", d_sched_assist);
 	remove_proc_entry("sched_assist_enabled", d_sched_assist);
+	remove_proc_entry("sched_disable_camera_ux", d_sched_assist);
 	remove_proc_entry("lowend_plat_opt", d_sched_assist);
 	remove_proc_entry(OPLUS_SCHEDASSIST_PROC_DIR, d_oplus_scheduler);
 	remove_proc_entry(OPLUS_SCHEDULER_PROC_DIR, NULL);

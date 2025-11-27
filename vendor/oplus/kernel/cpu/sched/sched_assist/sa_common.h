@@ -52,6 +52,7 @@
 #define DEBUG_DYNAMIC_PREEMPT (1 << 5)
 #define DEBUG_AMU_INSTRUCTION (1 << 6)
 #define DEBUG_VERBOSE  (1 << 10)	/* used for frameboost */
+#define DEBUG_SET_DSQ_ID (1 << 11) /* used for hmbird */
 
 /* define for sched assist feature */
 #define FEATURE_COMMON (1 << 0)
@@ -70,6 +71,7 @@
 #define SA_TYPE_ANIMATOR			(1 << 2)
 /* SA_TYPE_LISTPICK for camera */
 #define SA_TYPE_LISTPICK			(1 << 3)
+#define SA_TYPE_MQ_VIP				(1 << 4)
 #define SA_OPT_SET					(1 << 7)
 #define SA_OPT_RESET				(1 << 8)
 #define SA_OPT_SET_PRIORITY			(1 << 9)
@@ -79,6 +81,8 @@
 /* clear ux type when dequeue */
 #define SA_TYPE_ONCE				(1 << 15)
 #define SA_TYPE_INHERIT				(1 << 16)
+/* SA_TYPE_COMBINED isn't marked in ux_state, it only exists in return value of function */
+#define SA_TYPE_COMBINED			(1 << 17)
 #define SA_TYPE_URGENT_MASK	(SA_TYPE_LIGHT|SA_TYPE_ANIMATOR|SA_TYPE_SWIFT)
 #define SCHED_ASSIST_UX_MASK	(SA_TYPE_LIGHT|SA_TYPE_HEAVY|SA_TYPE_ANIMATOR|SA_TYPE_LISTPICK|SA_TYPE_SWIFT)
 
@@ -94,6 +98,14 @@
 
 #define SCHED_ASSIST_UX_PRIORITY_MASK	(0xFF000000)
 #define SCHED_ASSIST_UX_PRIORITY_SHIFT	24
+
+#define SCHED_QOS_LATENCY_MAGIC_MASK	(0xF00000000)
+#define SCHED_QOS_LATENCY_MAGIC_SHIFT	32
+#define SCHED_QOS_LATENCY_MAGIC	3
+
+#define SCHED_PIDQOS_ACTIVE_MAGIC_MASK	(0x1000000)
+#define SCHED_PIDQOS_ACTIVE_MAGIC_SHIFT	24
+#define SCHED_PIDQOS_ACTIVE_MAGIC	1
 
 /* Priority sorting of UX type tasks set by UAD, the value may change. record
 #define UX_PRIORITY_MEDIUM		0x03000000
@@ -120,8 +132,7 @@ UX_PRIORITY_PROTECT: Lowest priority protected ux type
 #define SA_INPUT					(1 << 5)
 #define SA_LAUNCHER_SI				(1 << 6)
 #define SA_SCENE_OPT_SET			(1 << 7)
-#define SA_GPU_COMPOSITION			(1 << 8)
-#define SA_CAMERA_HEAVY				(1 << 10)
+#define SA_GPU_COMPOSITION  			(1 << 8)
 
 #define ROOT_UID               0
 #define SYSTEM_UID             1000
@@ -162,8 +173,9 @@ eg: gerrit patchset "30438485"
 enum UX_STATE_TYPE {
 	UX_STATE_INVALID = 0,
 	UX_STATE_NONE,
-	UX_STATE_SCHED_ASSIST,
+	UX_STATE_STATIC,
 	UX_STATE_INHERIT,
+	UX_STATE_COMBINED,
 	MAX_UX_STATE_TYPE,
 };
 
@@ -201,6 +213,7 @@ enum IM_FLAG_TYPE {
 	IM_FLAG_TPD_SET_CPU_AFFINITY = 16,
 	IM_FLAG_COMPRESS_THREAD = 17, /* compress thread skips locking protect */
 	IM_FLAG_RENDER_THREAD = 18,
+	IM_FLAG_CAMERAHAL_THREAD = 20,
 	MAX_IM_FLAG_TYPE,
 };
 
@@ -262,6 +275,7 @@ struct oplus_rq {
 extern int global_debug_enabled;
 extern int global_sched_assist_enabled;
 extern int global_sched_assist_scene;
+extern int global_sched_disable_camera_ux;
 
 struct rq;
 
@@ -404,6 +418,32 @@ static inline void oplus_set_im_flag(struct task_struct *t, int im_flag)
 	set_bit(im_flag, &ots->im_flag);
 }
 
+static inline int get_ots_ux_state(struct oplus_task_struct *ots)
+{
+	int ux_state;
+	int sub_ux_state;
+	int ux_prio;
+	int ret;
+
+	ux_prio = ots->ux_state & SCHED_ASSIST_UX_PRIORITY_MASK;
+	ux_state = ots->ux_state & (SCHED_ASSIST_UX_MASK | SA_TYPE_INHERIT);
+	sub_ux_state = ots->sub_ux_state & (SCHED_ASSIST_UX_MASK | SA_TYPE_INHERIT);
+
+	if (sub_ux_state) {
+		ret = ux_state | (sub_ux_state & ~SA_TYPE_INHERIT) | SA_TYPE_COMBINED;
+	} else {
+		ret = ux_state;
+	}
+
+	if (ret & SCHED_ASSIST_UX_MASK) {
+		return ux_prio | ret;
+	}
+
+	return 0;
+}
+
+bool is_multiple_ux(struct oplus_task_struct *ots);
+
 static inline int oplus_get_ux_state(struct task_struct *t)
 {
 	struct oplus_task_struct *ots = get_oplus_task_struct(t);
@@ -411,7 +451,43 @@ static inline int oplus_get_ux_state(struct task_struct *t)
 	if (IS_ERR_OR_NULL(ots))
 		return 0;
 
+	return get_ots_ux_state(ots);
+}
+
+static inline int oplus_get_static_ux_state(struct task_struct *t)
+{
+	struct oplus_task_struct *ots = get_oplus_task_struct(t);
+
+	if (IS_ERR_OR_NULL(ots))
+		return 0;
+
+	if (ots->ux_state & SA_TYPE_INHERIT) {
+		return 0;
+	}
 	return ots->ux_state;
+}
+
+static inline int oplus_get_sub_ux_state(struct task_struct *t)
+{
+	struct oplus_task_struct *ots = get_oplus_task_struct(t);
+
+	if (IS_ERR_OR_NULL(ots))
+		return 0;
+
+	return ots->sub_ux_state;
+}
+
+static inline int oplus_get_inherited_ux_state(struct task_struct *t)
+{
+	struct oplus_task_struct *ots = get_oplus_task_struct(t);
+
+	if (IS_ERR_OR_NULL(ots))
+		return 0;
+
+	if (ots->ux_state & SA_TYPE_INHERIT) {
+		return ots->ux_state;
+	}
+	return ots->sub_ux_state;
 }
 
 void oplus_set_ux_state_lock(struct task_struct *t, int ux_state, int inherit_type, bool need_lock_rq);
@@ -504,6 +580,7 @@ static inline void init_task_ux_info(struct task_struct *t)
 	RB_CLEAR_NODE(&ots->ux_entry);
 	RB_CLEAR_NODE(&ots->exec_time_node);
 	ots->ux_state = 0;
+	ots->sub_ux_state = 0;
 	atomic64_set(&ots->inherit_ux, 0);
 	ots->ux_depth = 0;
 	ots->enqueue_time = 0;
@@ -513,6 +590,8 @@ static inline void init_task_ux_info(struct task_struct *t)
 	ots->vruntime = 0;
 	ots->preset_vruntime = 0;
 	ots->cfs_delta = -1;
+	ots->tick_hit_count = 0;
+	ots->start_jiffies = 0;
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)
 	ots->abnormal_flag = 0;
 #endif
@@ -562,11 +641,15 @@ static inline void init_task_ux_info(struct task_struct *t)
 	ots->amu_cycle = 0;
 	ots->amu_instruct = 0;
 #endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_QOS_SCHED)
+	ots->qos_level = -1;
+	ots->qos_recover_prio = -2;
+#endif
 };
 
-static inline bool test_sched_assist_ux_type(struct task_struct *task, unsigned int sa_ux_type)
+static inline bool test_ux_type(struct task_struct *task, int ux_type)
 {
-	return oplus_get_ux_state(task) & sa_ux_type;
+	return oplus_get_ux_state(task) & ux_type;
 }
 
 /* only top tasks set ux-prefer-cluster when limit_ux_task enabled(FEATURE_LIMIT).
@@ -586,17 +669,7 @@ static inline bool is_heavy_ux_task(struct task_struct *t)
 	if (IS_ERR_OR_NULL(ots))
 		return false;
 
-	return ots->ux_state & SA_TYPE_HEAVY;
-}
-
-static inline bool is_anim_ux_task(struct task_struct *t)
-{
-	struct oplus_task_struct *ots = get_oplus_task_struct(t);
-
-	if (IS_ERR_OR_NULL(ots))
-		return false;
-
-	return ots->ux_state & SA_TYPE_ANIMATOR;
+	return get_ots_ux_state(ots) & SA_TYPE_HEAVY;
 }
 
 static inline bool sched_assist_scene(unsigned int scene)
@@ -630,10 +703,8 @@ static inline u32 task_wts_sum(struct task_struct *tsk)
 bool is_min_cluster(int cpu);
 bool is_max_cluster(int cpu);
 bool is_mid_cluster(int cpu);
-bool is_top(struct task_struct *p);
 bool im_mali(const char *comm);
 bool task_is_runnable(struct task_struct *task);
-int get_ux_state(struct task_struct *task);
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_LOADBALANCE)
 int ux_mask_to_prio(int ux_mask);
@@ -659,15 +730,12 @@ bool is_heavy_load_top_task(struct task_struct *p);
 bool test_task_is_fair(struct task_struct *task);
 bool test_task_is_rt(struct task_struct *task);
 
-bool prio_higher(int a, int b);
 bool test_task_ux(struct task_struct *task);
 bool is_limit_task_ux_enabled(void);
 bool is_top_ux_task_up_enabled(void);
 bool test_task_ux_depth(int ux_depth);
 bool test_inherit_ux(struct task_struct *task, int type);
 bool test_set_inherit_ux(struct task_struct *task);
-bool test_task_identify_ux(struct task_struct *task, int id_type_ux);
-bool test_list_pick_ux(struct task_struct *task);
 int get_ux_state_type(struct task_struct *task);
 void sched_assist_target_comm(struct task_struct *task, const char *comm);
 unsigned int ux_task_exec_limit(struct task_struct *p);
@@ -679,6 +747,7 @@ ssize_t oplus_show_cpus(const struct cpumask *mask, char *buf);
 void adjust_rt_lowest_mask(struct task_struct *p, struct cpumask *local_cpu_mask, int ret, bool force_adjust);
 bool sa_skip_rt_sync(struct rq *rq, struct task_struct *p, bool *sync);
 bool sa_rt_skip_ux_cpu(int cpu);
+int is_vip_mvp(struct task_struct *p);
 
 /* s64 account_ux_runtime(struct rq *rq, struct task_struct *curr); */
 void opt_ss_lock_contention(struct task_struct *p, unsigned long old_im, int new_im);
@@ -708,8 +777,12 @@ void set_im_flag_with_bit(int im_flag, struct task_struct *task);
 void android_vh_cgroup_set_task_handler(void *unused, int ret, struct task_struct *task);
 /* register vendor hook in kernel/signal.c  */
 void android_vh_exit_signal_handler(void *unused, struct task_struct *p);
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+void android_rvh_cpu_cgroup_online_handler(void *unused, struct cgroup_subsys_state *css);
+#endif
+void android_rvh_set_cpus_allowed_comm_handler(void *unused, struct task_struct *task, const struct cpumask *new_mask);
 void android_rvh_set_cpus_allowed_by_task_handler(void *unused, const struct cpumask *cpu_valid_mask, const struct cpumask *new_mask,
-												struct task_struct *p, unsigned int *dest_cpu);
+				struct task_struct *p, unsigned int *dest_cpu);
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_BAN_APP_SET_AFFINITY)
 void android_vh_sched_setaffinity_early_handler(void *unused, struct task_struct *task, const struct cpumask *new_mask, bool *skip);
 #endif

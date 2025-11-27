@@ -35,6 +35,7 @@
 #include <linux/cgroup.h>
 
 #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
 #include "locking_main.h"
 
 #define RMMOD_EXIT	(2)
@@ -1074,8 +1075,8 @@ static void remove_proc_nodes(void)
 static atomic_t threads_cnts[NR_GRP_TYPES];
 static void print_thread_attr(void)
 {
-	struct cgroup_subsys_state *css;
 	struct oplus_task_struct *ots;
+	struct task_struct *p;
 
 	if (current->prio < MAX_RT_PRIO) {
 		atomic_inc(&threads_cnts[GRP_RT]);
@@ -1090,21 +1091,18 @@ static void print_thread_attr(void)
 			atomic_read(&threads_cnts[GRP_UX]));
 		return;
 	}
-	css = task_css(current, cpu_cgrp_id);
-	if (!css) {
-		trace_printk("locktorture : ---Error task no css ---\n");
-	}
-	else if (css->id == CGROUP_TOP_APP) {
+	p = current;
+	if (ta_task(p)) {
 		atomic_inc(&threads_cnts[GRP_TA]);
 		trace_printk("locktorture : ---Create TA thread, num : %d---\n",
 			atomic_read(&threads_cnts[GRP_TA]));
 	}
-	else if (css->id == CGROUP_FOREGROUND) {
+	else if (fg_task(p)) {
 		atomic_inc(&threads_cnts[GRP_FG]);
 		trace_printk("locktorture : ---Create FG thread, num : %d---\n",
 			atomic_read(&threads_cnts[GRP_FG]));
 	}
-	else if (css->id == CGROUP_BACKGROUND) {
+	else if (bg_task(p)) {
 		atomic_inc(&threads_cnts[GRP_BG]);
 		trace_printk("locktorture : ---Create BG thread, num : %d---\n",
 			atomic_read(&threads_cnts[GRP_BG]));

@@ -13,6 +13,12 @@
 #include <linux/sched/cputime.h>
 #include <linux/arch_topology.h>
 #include <../kernel/sched/sched.h>
+#include <trace/hooks/binder.h>
+#include <trace/hooks/sched.h>
+#include <trace/events/sched.h>
+#include <trace/events/task.h>
+#include "../sched_assist/sa_group.h"
+#include "../sched_assist/sa_common.h"
 #include "oplus_cap.h"
 
 #define LARGE_BUFFER_SIZE 250
@@ -71,33 +77,17 @@ EXPORT_SYMBOL_GPL(util_thresh_cvt);
 
 int get_grp_adinfo(struct task_struct *p)
 {
-	struct cgroup_subsys_state *css;
-
 	if (p == NULL)
 		return AD_DF;
 
-	rcu_read_lock();
-	css = task_css(p, cpu_cgrp_id);
-	if (!css) {
-		rcu_read_unlock();
-		return AD_DF;
-	}
-	rcu_read_unlock();
-
-	switch (css->id) {
-	case TOPAPP:
+	if (ta_task(p))
 		return AD_TOP;
-	case FGAPP:
+	else if (fg_task(p))
 		return AD_FG;
-	case BGAPP:
+	else if (bg_task(p))
 		return AD_BG;
-	case DEFAULTAPP:
-	case NULLAPP:
+	else
 		return AD_DF;
-	default:
-		return AD_DF;
-	}
-	return AD_DF;
 }
 EXPORT_SYMBOL_GPL(get_grp_adinfo);
 
@@ -815,4 +805,52 @@ void oplus_cap_proc_remove(struct proc_dir_entry *dir)
 	remove_proc_entry("oplus_cap_multiple", oplus_cap_dir_parent);
 	remove_proc_entry("group_adjust", oplus_cap_dir_parent);
 	remove_proc_entry("util_thresh_percent", oplus_cap_dir_parent);
+}
+
+/* implement vender hook in driver/android/fair.c */
+void android_rvh_place_entity_handler(void *unused, struct cfs_rq *cfs_rq, struct sched_entity *se, int initial, u64 *vruntime)
+{
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_VT_CAP)
+	struct task_struct *se_task = NULL;
+	int cpu = cpu_of(rq_of(cfs_rq));
+	unsigned int cluster_id = topology_physical_package_id(cpu);
+	u64 adjust_time = 0;
+
+	if (!sa_adjust_group_enable || oplus_cap_multiple[cluster_id] <= 100)
+		return;
+
+	if (!oplus_entity_is_task(se) || initial)
+		return;
+
+	se_task = task_of(se);
+	if (test_task_ux(se_task))
+		return;
+
+	switch (get_grp_adinfo(se_task)) {
+	case AD_TOP:
+		adjust_time = (group_adjust.adjust_std_vtime_slice * group_adjust.group_param[AD_TOP].vtime_compensate * oplus_cap_multiple[cluster_id]);
+		break;
+	case AD_FG:
+		adjust_time = (group_adjust.adjust_std_vtime_slice * group_adjust.group_param[AD_FG].vtime_compensate * oplus_cap_multiple[cluster_id]);
+		break;
+	case AD_BG:
+		adjust_time = (group_adjust.adjust_std_vtime_slice * group_adjust.group_param[AD_BG].vtime_compensate * oplus_cap_multiple[cluster_id]);
+		break;
+	case AD_DF:
+		adjust_time = (group_adjust.adjust_std_vtime_slice * group_adjust.group_param[AD_DF].vtime_compensate * oplus_cap_multiple[cluster_id]);
+		break;
+	default:
+		break;
+	}
+	adjust_time = clamp_val(adjust_time, 0, se->vruntime);
+	se->vruntime -= adjust_time;
+	if (unlikely(eas_opt_debug_enable))
+		trace_printk("[eas_opt]: common:%s, pid: %d, cpu: %d, group_id: %d, adjust_time: %llu, adjust_after_vtime: %llu\n",
+				se_task->comm, se_task->pid, cpu, get_grp_adinfo(se_task), adjust_time, se->vruntime);
+#endif
+}
+
+void register_oplus_cap_vendor_hooks(void)
+{
+	register_trace_android_rvh_place_entity(android_rvh_place_entity_handler, NULL);
 }

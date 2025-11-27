@@ -49,16 +49,6 @@ struct futex_uinfo {
 	u64 inform_user;
 };
 
-enum {
-	CGROUP_RESV = 0,
-	CGROUP_DEFAULT,
-	CGROUP_FOREGROUND,
-	CGROUP_BACKGROUND,
-	CGROUP_TOP_APP,
-
-	CGROUP_NRS,
-};
-
 enum rwsem_waiter_type {
 	RWSEM_WAITING_FOR_WRITE,
 	RWSEM_WAITING_FOR_READ

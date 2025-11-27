@@ -215,7 +215,8 @@ void binder_alloc_handler(void *data, size_t size, size_t *free_async_space, int
 			hans_report(ASYNC_BINDER, task_tgid_nr(current), task_uid(current).val, task_tgid_nr(p), task_uid(p).val, "free_buffer_full", -1);
 		}
 	}
-	*should_fail = false;
+	//should_fail is used by stability team to control whether this alloc should be prevented, hans should not use should_fail
+	//*should_fail = false;
 }
 #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 void binder_alloc_handler(void *data, size_t size, size_t *free_async_space, int is_async)
@@ -300,9 +301,12 @@ static inline struct list_head *get_proc_fg_todo_list(struct binder_proc *proc)
 	if (IS_ERR_OR_NULL(obp)) {
 		return NULL;
 	}
-
-	return (&obp->fg_todo);
+	if (obp->fg_inited)
+		return (&obp->fg_todo);
+	else
+		return NULL;
 }
+
 #else
 static inline struct list_head *get_proc_fg_todo_list(struct binder_proc *proc)
 {

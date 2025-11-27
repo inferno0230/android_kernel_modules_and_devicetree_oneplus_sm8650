@@ -13,12 +13,6 @@
 #define oplus_entity_is_task(se)	(1)
 #endif
 
-#define TOPAPP 4
-#define BGAPP 3
-#define DEFAULTAPP 1
-#define FGAPP 2
-#define NULLAPP 0
-
 #define AD_TOP 0
 #define AD_FG 1
 #define AD_BG 2
@@ -61,5 +55,6 @@ extern bool adjust_group_task(struct task_struct *p, int cpu);
 struct proc_dir_entry;
 extern int oplus_cap_init(struct proc_dir_entry *dir);
 extern void oplus_cap_proc_remove(struct proc_dir_entry *dir);
+void register_oplus_cap_vendor_hooks(void);
 
 #endif /* _OPLUS_CAP_H */

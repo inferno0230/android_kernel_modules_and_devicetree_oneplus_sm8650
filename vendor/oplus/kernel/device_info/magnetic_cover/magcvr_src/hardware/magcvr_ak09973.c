@@ -538,7 +538,7 @@ static void __exit magcvr_ak09973_exit(void)
 	i2c_del_driver(&magcvr_ak09973_i2c_driver);
 }
 
-late_initcall(magcvr_ak09973_init);
+module_init(magcvr_ak09973_init);
 module_exit(magcvr_ak09973_exit);
 
 MODULE_DESCRIPTION("Magcvr ak09973 Driver");

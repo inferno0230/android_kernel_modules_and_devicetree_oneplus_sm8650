@@ -29,6 +29,10 @@
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 #include <soc/oplus/system/kernel_fb.h>
 #endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_TRACE_SENSOR)
+#include <soc/oplus/system/oplus_trace_sensor.h>
+static bool enable_report = false;
+#endif
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
 #ifndef PDE_DATA
@@ -36,11 +40,21 @@
 #endif
 #endif
 
+#ifndef SENSOR_DEVICE_TYPE
 #define SENSOR_DEVICE_TYPE	  "10002"
+#endif
+#ifndef SENSOR_POWER_TYPE
 #define SENSOR_POWER_TYPE	   "10003"
+#endif
+#ifndef SENSOR_STABILITY_TYPE
 #define SENSOR_STABILITY_TYPE   "10004"
+#endif
+#ifndef SENSOR_PFMC_TYPE
 #define SENSOR_PFMC_TYPE		"10005"
+#endif
+#ifndef SENSOR_MEMORY_TYPE
 #define SENSOR_MEMORY_TYPE	  "10006"
+#endif
 
 #define SENSOR_DEBUG_DEVICE_TYPE	  "20002"
 #define SENSOR_DEBUG_POWER_TYPE	   "20003"
@@ -170,6 +184,18 @@ struct sensor_fb_conf g_fb_conf[] = {
 	{DOUBLE_TAP_PREVENTED_BY_FREEFALL_SLOPE_ID, "device_double_prevented_by_freefall_slope", SENSOR_DEBUG_DEVICE_TYPE},
 
 	{ALAILABLE_SENSOR_LIST_ID, "available_sensor_list", SENSOR_DEBUG_DEVICE_TYPE},
+
+	{PICKUP_COUNT_ID, "device_pickup_cnt", SENSOR_DEVICE_TYPE},
+	{ELEVATOR_COUNT_ID, "device_elevator_cnt", SENSOR_DEVICE_TYPE},
+	{MEASUREMENT_COUNT_ID, "device_measurement_cnt", SENSOR_DEVICE_TYPE},
+	{POCKET_COUNT_ID, "device_pocket_cnt", SENSOR_DEVICE_TYPE},
+	{GESTURE_PROX_COUNT_ID, "device_gesture_prox_cnt", SENSOR_DEVICE_TYPE},
+	{PHONE_PROX_COUNT_ID, "device_phone_prox_cnt", SENSOR_DEVICE_TYPE},
+	{SHAKING_COUNT_ID, "device_shaking_cnt", SENSOR_DEVICE_TYPE},
+	{FP_DISPLAY_COUNT_ID, "device_fp_display_cnt", SENSOR_DEVICE_TYPE},
+	{PHONE_HEAD_COUNT_ID, "device_phone_head_cnt", SENSOR_DEVICE_TYPE},
+	{USND_NEAR_PRECISION_ID, "device_usnd_near_precision", SENSOR_DEVICE_TYPE},
+	{USND_FAR_PRECISION_ID, "device_usnd_far_precision", SENSOR_DEVICE_TYPE},
 
 	{HAL_SENSOR_NOT_FOUND, "device_hal_not_found", SENSOR_DEVICE_TYPE},
 	{HAL_QMI_ERROR, "device_hal_qmi_error", SENSOR_DEVICE_TYPE},
@@ -444,6 +470,13 @@ static int parse_shr_info(struct sensor_fb_cxt *sensor_fb_cxt)
 		pr_info("payload =%s\n", payload);
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
 		oplus_kevent_fb(FB_SENSOR, g_fb_conf[index].fb_event_id, payload);
+#endif
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_TRACE_SENSOR)
+		if (enable_report) {
+			oplus_trace_sensor_fault_report(g_fb_conf[index].event_id,
+					g_fb_conf[index].fb_event_id, g_fb_conf[index].fb_field,
+					sensor_fb_cxt->fb_smem.event[count].count);
+		}
 #endif
 	}
 

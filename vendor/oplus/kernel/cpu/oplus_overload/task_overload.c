@@ -39,6 +39,9 @@
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
 #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
 #endif
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
+
+
 #include <linux/sched/cputime.h>
 #include "../../../kernel/sched/sched.h"
 #include <linux/cred.h>
@@ -59,7 +62,6 @@
 #define TRIGGER_UTIL	(80)
 #define CPU_THRESHOLD	(85)
 #define CPU_CAP	(100)
-#define SA_CGROUP_BACKGROUND (3)
 
 #define ABNORMAL_MIN_CHECK (100)
 
@@ -184,11 +186,6 @@ int get_task_cgroup_id(struct task_struct *task)
 	return css ? css->id : -1;
 }
 
-bool test_task_bg(struct task_struct *task)
-{
-	return (get_task_cgroup_id(task) == SA_CGROUP_BACKGROUND) ? 1 : 0;
-}
-
 void tol_init_cpus(void)
 {
 	int cpu;
@@ -242,7 +239,7 @@ bool test_task_overload(struct task_struct *task)
 		ots->abnormal_flag++;
 	if (ots->abnormal_flag == ABNORMAL_THRESHOLD) {
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-		ux_stat = get_ux_state_type(task);
+		ux_stat = oplus_get_ux_state(task);
 #endif
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
 		fbg_stat = is_fbg_task(task);
@@ -250,7 +247,7 @@ bool test_task_overload(struct task_struct *task)
 
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
 		if (sysctl_abnormal_enable && test_task_uid(task) && !fbg_stat
-				&& ux_stat != UX_STATE_INHERIT && ux_stat != UX_STATE_SCHED_ASSIST)
+				&& !ux_stat)
 #else
 		if (sysctl_abnormal_enable && test_task_uid(task) && !fbg_stat)
 #endif
@@ -259,7 +256,7 @@ bool test_task_overload(struct task_struct *task)
 		set_task_state(task);
 	}
 
-	if (ots->abnormal_flag > ABNORMAL_THRESHOLD && test_task_bg(task)) {
+	if (ots->abnormal_flag > ABNORMAL_THRESHOLD && bg_task(task)) {
 		ots->abnormal_flag -= ABNORMAL_MIN_CHECK;
 		return true;
 	}
@@ -329,7 +326,7 @@ bool check_abnormal_task_util(struct task_struct *p)
 	if (!p)
 		return false;
 
-	if (test_task_bg(p) && ots->abnormal_flag >= ABNORMAL_MIN_CHECK) {
+	if (bg_task(p) && ots->abnormal_flag >= ABNORMAL_MIN_CHECK) {
 		ots->abnormal_flag -= ABNORMAL_TIME;
 		if (ots->abnormal_flag <= ABNORMAL_MIN_CHECK) {
 			if (p->uclamp_req[UCLAMP_MAX].value != RESUME_UCLAMP)

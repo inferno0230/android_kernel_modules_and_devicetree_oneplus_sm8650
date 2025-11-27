@@ -9,6 +9,7 @@
 #include <linux/sched/cputime.h>
 #include <kernel/sched/sched.h>
 #include <linux/reciprocal_div.h>
+#include <linux/sched/clock.h>
 
 #include "tune.h"
 
@@ -33,6 +34,11 @@ DEFINE_PER_CPU(struct boost_groups, cpu_boost_groups);
 
 static bool schedtune_initialized = false;
 
+static inline unsigned long task_util(struct task_struct *p)
+{
+	return READ_ONCE(p->se.avg.util_avg);
+}
+
 static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
 {
 	return css ? container_of(css, struct task_group, css) : NULL;
@@ -41,11 +47,11 @@ static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
 static inline int oplus_get_stune_idx(struct task_struct *t)
 {
 	/*android_oem_data1[0] used for oplus_task_struct*/
-	return t->android_oem_data1[1];
+	return t->android_oem_data1[2];
 }
 static inline void  oplus_set_stune_idx(struct task_struct *t, int stune_idx)
 {
-	t->android_oem_data1[1] = stune_idx;
+	t->android_oem_data1[2] = stune_idx;
 }
 
 static inline bool schedtune_boost_timeout(u64 now, u64 ts)
@@ -60,10 +66,10 @@ static inline struct schedtune *task_schedtune(struct task_struct *tsk)
 
 	css = task_css(tsk, cpu_cgrp_id);
 	tg = css_tg(css);
-	return (struct schedtune *)tg->android_kabi_reserved1;
+	return (struct schedtune *)tg->android_kabi_reserved3;
 }
 
-static int schedtune_task_boost(struct task_struct *p)
+int schedtune_task_boost(struct task_struct *p)
 {
 	struct schedtune *st;
 	int task_boost;
@@ -74,7 +80,7 @@ static int schedtune_task_boost(struct task_struct *p)
 	/* Get task boost value */
 	rcu_read_lock();
 	st = task_schedtune(p);
-	if (!st){
+	if (!st) {
 		rcu_read_unlock();
 		return 0;
 	}
@@ -83,6 +89,7 @@ static int schedtune_task_boost(struct task_struct *p)
 
 	return task_boost;
 }
+EXPORT_SYMBOL_GPL(schedtune_task_boost);
 
 static inline bool schedtune_boost_group_active(int idx,
 		struct boost_groups *bg, u64 now)
@@ -160,7 +167,7 @@ static int schedtune_boostgroup_update(int idx, int boost)
 		bg->group[idx].boost = boost;
 
 		/* Check if this update increase current max */
-		now = sched_clock_cpu(cpu);
+		now = sched_clock();
 		if (boost > cur_boost_max &&
 			schedtune_boost_group_active(idx, bg, now)) {
 			bg->boost_max = boost;
@@ -187,7 +194,7 @@ static int schedtune_boostgroup_update(int idx, int boost)
 s64 schedtune_boost_read(struct cgroup_subsys_state *css, struct cftype *cft)
 {
 	struct task_group *tg = css_tg(css);
-	struct schedtune *st = (struct schedtune *)tg->android_kabi_reserved1;
+	struct schedtune *st = (struct schedtune *)tg->android_kabi_reserved3;
 
 	if (!st)
 		return -ENOENT;
@@ -197,12 +204,19 @@ s64 schedtune_boost_read(struct cgroup_subsys_state *css, struct cftype *cft)
 int schedtune_boost_write(struct cgroup_subsys_state *css, struct cftype *cft, s64 boost)
 {
 	struct task_group *tg = css_tg(css);
-	struct schedtune *st = (struct schedtune *)tg->android_kabi_reserved1;
+	struct schedtune *st = (struct schedtune *)tg->android_kabi_reserved3;
 
 	if (!st)
 		return -ENOENT;
-	if (boost < -100 || boost > 100)
+
+	if (QOS_SCHED_TUNE_DEFAULT >= boost || boost > 100) {
+		pr_err("invalid or default stune boost value %lld\n", boost);
 		return -EINVAL;
+	}
+
+	/*stune qos reset tag is 0, it's the same with reset boost value, so we don't need
+	to handle it specifically*/
+
 	st->boost = boost;
 	/* Update CPU boost */
 	schedtune_boostgroup_update(st->idx, st->boost);
@@ -240,10 +254,10 @@ static int schedtune_cpu_boost_with(int cpu, struct task_struct *p)
 {
 	struct boost_groups *bg;
 	u64 now;
-	int task_boost = p ? schedtune_task_boost(p) : -100;
+	int task_boost = p ? schedtune_task_boost(p) : 0;
 
 	bg = &per_cpu(cpu_boost_groups, cpu);
-	now = sched_clock_cpu(cpu);
+	now = sched_clock();
 
 	/* Check to see if we have a hold in effect */
 	if (schedtune_boost_timeout(now, bg->boost_ts))
@@ -266,6 +280,15 @@ static inline long schedtune_cpu_margin_with(unsigned long util, int cpu,
 	return margin;
 }
 
+unsigned long schedtune_task_util(struct task_struct *p)
+{
+	unsigned long util = task_util(p);
+	long margin = schedtune_cpu_margin_with(util, task_cpu(p), p);
+
+	return util + margin;
+}
+EXPORT_SYMBOL(schedtune_task_util);
+
 noinline unsigned long stune_util(int cpu, unsigned long other_util,
 		 unsigned long util)
 {
@@ -277,6 +300,7 @@ noinline unsigned long stune_util(int cpu, unsigned long other_util,
 
 	return u_util + margin;
 }
+EXPORT_SYMBOL(stune_util);
 
 static inline bool schedtune_update_timestamp(struct task_struct *p)
 {
@@ -294,7 +318,7 @@ static inline void schedtune_tasks_update(struct task_struct *p, int cpu,
 
 	/* Update timeout on enqueue */
 	if (task_count > 0) {
-		u64 now = sched_clock_cpu(cpu);
+		u64 now = sched_clock();
 
 		if (schedtune_update_timestamp(p))
 			bg->group[idx].ts = now;
@@ -356,9 +380,12 @@ void schedtune_dequeue_task(struct task_struct *p, int cpu)
 	raw_spin_lock_irqsave(&bg->lock, irq_flags);
 
 	idx = oplus_get_stune_idx(p);
+	if (idx >= BOOSTGROUPS_COUNT)
+		goto done;
 
 	schedtune_tasks_update(p, cpu, idx, DEQUEUE_TASK);
 
+done:
 	raw_spin_unlock_irqrestore(&bg->lock, irq_flags);
 }
 
@@ -398,7 +425,7 @@ static void schedtune_boostgroup_release(struct schedtune *st)
 
 void schedtune_root_alloc(void)
 {
-	root_task_group.android_kabi_reserved1 = (u64)&root_schedtune;
+	root_task_group.android_kabi_reserved3 = (u64)&root_schedtune;
 }
 
 int schedtune_alloc(struct task_group *tg, struct cgroup_subsys_state *parent_css)
@@ -422,10 +449,10 @@ int schedtune_alloc(struct task_group *tg, struct cgroup_subsys_state *parent_cs
 				   BOOSTGROUPS_COUNT);
 		return -EFAULT;
 	}
-	st = kzalloc(sizeof(*st), GFP_KERNEL);
+	st = kzalloc(sizeof(*st), GFP_ATOMIC);
 	if (!st)
 			return -ENOMEM;
-	tg->android_kabi_reserved1 = (u64)st;
+	tg->android_kabi_reserved3 = (u64)st;
 	schedtune_boostgroup_init(st, idx);
 	return 0;
 }
@@ -435,9 +462,9 @@ void schedtune_free(struct cgroup_subsys_state *css)
 	struct task_group *tg = css_tg(css);
 	struct schedtune *st;
 
-	st = (struct schedtune *)tg->android_kabi_reserved1;
+	st = (struct schedtune *)tg->android_kabi_reserved3;
 	if (!st)
-		return ;
+		return;
 	/* Release per CPUs boost group support */
 	schedtune_boostgroup_release(st);
 	kfree(st);
@@ -474,7 +501,7 @@ void schedtune_attach(struct task_struct *task)
 	bg->group[src_idx].tasks = max(0, tasks);
 	bg->group[dst_idx].tasks += 1;
 	/* Update boost hold start for this group */
-	now = sched_clock_cpu(cpu);
+	now = sched_clock();
 	bg->group[dst_idx].ts = now;
 	/* Force boost group re-evaluation at next boost check */
 	bg->boost_ts = now - SCHEDTUNE_BOOST_HOLD_NS;
@@ -497,7 +524,6 @@ static inline  void schedtune_init_cgroups(void)
 	}
 	pr_info("schedtune: configured to support %d boost groups",
 		BOOSTGROUPS_COUNT);
-
 	schedtune_initialized = true;
 }
 
@@ -511,4 +537,5 @@ static int schedtune_init(void)
 
 	return 0;
 }
+
 postcore_initcall(schedtune_init);

@@ -8,10 +8,6 @@
 #define _OPLUS_SA_FAIR_H_
 
 #ifdef CONFIG_OPLUS_FEATURE_SCHED_SPREAD
-#define SA_CGROUP_DEFAULT		(1)
-#define SA_CGROUP_FOREGROUND		(2)
-#define SA_CGROUP_BACKGROUND		(3)
-#define SA_CGROUP_TOP_APP		(4)
 
 /* define for load balance task type */
 #define SA_HIGH_LOAD		1
@@ -52,6 +48,7 @@ void nopreempt_state_systrace_c(unsigned int cpu, int nopreempt_state);
 #endif
 
 int oplus_idle_cpu(int cpu);
+inline int get_task_cls_for_scene(struct task_struct *task);
 
 #ifdef CONFIG_OPLUS_ADD_CORE_CTRL_MASK
 bool oplus_cpu_halted(unsigned int cpu);
@@ -78,7 +75,6 @@ bool is_spread_task_enabled(void);
 #endif /* CONFIG_OPLUS_FEATURE_SCHED_SPREAD */
 
 /* register vender hook in kernel/sched/fair.c */
-void android_rvh_place_entity_handler(void *unused, struct cfs_rq *cfs_rq, struct sched_entity *se, int initial, u64 *vruntime);
 void android_rvh_check_preempt_tick_handler(void *unused, struct task_struct *task,
 			unsigned long *ideal_runtime, bool *skip_preempt,
 			unsigned long delta_exec, struct cfs_rq *cfs_rq,

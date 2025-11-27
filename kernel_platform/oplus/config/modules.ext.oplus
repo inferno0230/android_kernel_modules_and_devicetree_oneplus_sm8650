@@ -3,6 +3,7 @@
 ../vendor/oplus/kernel/device_info/tri_state_key
 ../vendor/oplus/kernel/touchpanel/oplus_touchscreen_v2
 ../vendor/oplus/kernel/touchpanel/synaptics_hbp
+../vendor/oplus/kernel/tp/hbp/hbp
 ../vendor/oplus/secure/common/bsp/drivers/oplus_secure_common
 ../vendor/oplus/secure/biometrics/fingerprints/bsp/uff/driver
 ../vendor/oplus/kernel/secureguard/gki2.0/rootguard_new
@@ -22,3 +23,6 @@
 ../vendor/oplus/kernel/framework_stability/oplus_stability_helper
 ../vendor/oplus/kernel/device_info/pogo_keyboard
 ../vendor/oplus/kernel/power/power_hook
+../vendor/oplus/kernel/power/standby_netlink
+../vendor/oplus/kernel/cpu/sched_ext
+../vendor/oplus/kernel/power/rpmh

@@ -25,6 +25,12 @@ config KSHRINK_SLABD
 	help
 	  define this config to add oplus memload optimization feature
 
+config OPLUS_LEVEL_PROTECT
+	tristate "level protect optimization"
+	default n
+	help
+	  define this config to add oplus level protect optimization feature
+
 config KSHRINK_LRUVECD
 	tristate "shrink lruvecd"
 	default n

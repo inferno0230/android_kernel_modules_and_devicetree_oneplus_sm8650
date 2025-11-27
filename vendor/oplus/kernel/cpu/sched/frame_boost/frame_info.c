@@ -143,6 +143,26 @@ int alloc_multi_fbg(void)
 }
 EXPORT_SYMBOL_GPL(alloc_multi_fbg);
 
+/*this function is used when system use single RTG*/
+int set_static_fbg(int grp_id)
+{
+	unsigned int id_offset;
+
+	if ((grp_id < MULTI_FBG_ID) || (grp_id >= MULTI_FBG_ID + MULTI_FBG_NUM)) {
+		return -1;
+	}
+	id_offset = grp_id - MULTI_FBG_ID;
+	write_lock(&g_id_manager.lock);
+	set_bit(grp_id - MULTI_FBG_ID, g_id_manager.id_map);
+	g_id_manager.offset = id_offset;
+	write_unlock(&g_id_manager.lock);
+
+	set_frame_rate(grp_id, DEFAULT_FRAME_RATE);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(set_static_fbg);
+
 void release_multi_fbg(int id)
 {
 	if ((id < MULTI_FBG_ID) || (id >= MULTI_FBG_ID + MULTI_FBG_NUM))

@@ -927,7 +927,7 @@ int boost_pool_mgr_init(void)
 		goto destroy_proc_dump;
 	}
 
-	ret = register_shrinker(&pool_shrinker,NULL);
+	ret = register_shrinker(&pool_shrinker, "boost_pool");
 	if (ret) {
 		pr_err("register shrinker failed\n");
 		goto destroy_proc_enable;

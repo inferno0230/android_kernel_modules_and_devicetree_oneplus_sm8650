@@ -54,17 +54,6 @@ noinline int tracing_mark_write(const char *buf)
 	return 0;
 }
 
-inline bool test_task_is_fair(struct task_struct *task)
-{
-	if (unlikely(!task))
-		return false;
-
-	/* valid CFS priority is MAX_RT_PRIO..MAX_PRIO-1 */
-	if ((task->prio >= MAX_RT_PRIO) && (task->prio <= MAX_PRIO-1))
-		return true;
-	return false;
-}
-
 static DEFINE_PER_CPU(int, prev_locking_state);
 static DEFINE_PER_CPU(int, prev_locking_depth);
 
@@ -479,21 +468,20 @@ static void update_locking_time(unsigned long time, bool in_cs)
 	}
 
 
-	if (locking_depth_skip(ots->locking_depth)) {
-		/*
-		 * If locking_depth record err, we should not
-		 * protect the thread which maybe in unlock state.
-		 */
-		ots->locking_start_time = 0;
-		return;
-	}
-
 	/*
 	 * Current has acquired the lock, increase it's locking depth.
 	 * The depth over one means current hold more than one lock.
 	 */
 	if (time > 0) {
 		ots->locking_depth++;
+		if (locking_depth_skip(ots->locking_depth)) {
+			/*
+			 * If locking_depth record err, we should not
+			 * protect the thread which maybe in unlock state.
+			 */
+			ots->locking_start_time = 0;
+			return;
+		}
 		goto set;
 	}
 

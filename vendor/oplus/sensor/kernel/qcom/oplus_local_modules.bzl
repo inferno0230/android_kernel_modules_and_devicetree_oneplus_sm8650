@@ -59,7 +59,8 @@ def define_oplus_local_modules():
             "sensor/oplus_sensor_feedback/sensor_feedback.c",
         ]),
         includes = ["."],
-        local_defines = ["CONFIG_OPLUS_SENSOR_DRM_PANEL_NOTIFY"],
+        local_defines = ["CFG_OPLUS_ARCH_IS_QCOM",
+                         "CONFIG_OPLUS_SENSOR_DRM_PANEL_NOTIFY"],
     )
 
     define_oplus_ddk_module(

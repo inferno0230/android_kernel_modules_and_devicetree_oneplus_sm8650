@@ -89,6 +89,7 @@ enum panel_id{
 	DH_SOFT_LIGHT,
 	NT36532W,
 	HX,
+	P_D,
 	PANEL_NUM
 };
 

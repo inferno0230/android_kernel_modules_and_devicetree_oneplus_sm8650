@@ -354,6 +354,12 @@ static long ofb_sys_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 				ret = grp_id;
 				if (grp_id < 0)
 					return grp_id;
+			} else if (grp_id == 0) { /*for single RTG*/
+				grp_id = MULTI_FBG_ID + 1;
+				ret = set_static_fbg(grp_id);
+				if (ret < 0)
+					return grp_id;
+
 			} else if (!is_active_multi_frame_fbg(grp_id))
 				return -INVALID_FBG_ID;
 			else if (data.pid == -1 || data.tid == -1) {
@@ -388,6 +394,8 @@ static long ofb_sys_ioctl(struct file *file, unsigned int cmd, unsigned long arg
 		if (data.stage == BOOST_ADD_FRAME_TASK) {
 			/* Should this stage suport SF/GAME/INPUT group? */
 			grp_id = data.m_rtg.group_id;
+			if (grp_id == 0)
+				grp_id = MULTI_FBG_ID + 1;
 			if (!is_active_multi_frame_fbg(grp_id))
 				return -INVALID_FBG_ID;
 			if (add_rm_related_frame_task(grp_id, data.pid, data.tid, data.capacity_need,

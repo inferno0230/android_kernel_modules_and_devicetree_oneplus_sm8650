@@ -64,6 +64,7 @@ void android_vh_dup_task_struct_handler(void *unused,
 		return;
 	}
 
+	atomic_set(&ots->is_vip_mvp, 0);
 	ots->task = tsk;
 #if IS_ENABLED(CONFIG_ARM64_AMU_EXTN) && IS_ENABLED(CONFIG_OPLUS_FEATURE_CPU_JANKINFO)
 	ots->uid_struct = NULL;
@@ -111,10 +112,17 @@ void android_vh_free_task_handler(void *unused, struct task_struct *tsk)
 	RB_CLEAR_NODE(&ots->ux_entry);
 	RB_CLEAR_NODE(&ots->exec_time_node);
 	list_del_init(&ots->fbg_list);
+	atomic_set(&ots->is_vip_mvp, 0);
 	ots->task = NULL;
 #if IS_ENABLED(CONFIG_ARM64_AMU_EXTN) && IS_ENABLED(CONFIG_OPLUS_FEATURE_CPU_JANKINFO)
 	ots->uid_struct = NULL;
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_QOS_SCHED)
+	ots->qos_level = -1;
+	ots->qos_recover_prio = -2;
+#endif
+
 	smp_mb();
 
 	free_oplus_task_struct(ots);
@@ -187,6 +195,13 @@ static void init_oplus_task_struct(void *ptr)
 	ots->amu_cycle = 0;
 	ots->amu_instruct = 0;
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_QOS_SCHED)
+	ots->qos_level = -1;
+	ots->qos_recover_prio = -2;
+	mutex_init(&ots->qs_mutex);
+#endif
+
 	raw_spin_lock_init(&ots->fbg_list_entry_lock);
 	ots->preferred_cluster_id = -1;
 	ots->fbg_depth = -1;

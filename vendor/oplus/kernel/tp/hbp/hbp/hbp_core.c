@@ -23,6 +23,9 @@
 #include "hbp_spi.h"
 #include "hbp_tui.h"
 
+#include "hbp_power.h"
+extern void hbp_power_ctrl(struct hbp_device *hbp_dev, struct power_sequeue sq[]);
+
 struct hbp_core *g_hbp;
 struct task_struct *suspend_task = NULL;
 
@@ -35,7 +38,6 @@ extern struct hbp_device *hbp_device_create(void *priv,
 		struct hbp_core *hbp,
 		struct device *dev,
 		struct dev_operations *dev_ops,
-		struct bus_operations **bus_ops,
 		int id);
 
 
@@ -82,8 +84,8 @@ static int hbp_match_device_id(struct device_node *np, struct hbp_core *hbp)
 
 	cnt = of_count_phandle_with_args(hbp->dev->of_node, "hbp,devices", NULL);
 	for (i = 0; i < cnt; i++) {
-		dev_np = of_parse_phandle(hbp->dev->of_node, "hbp,devices", cnt);
-		of_property_read_u32(np, "device,id", &id);
+		dev_np = of_parse_phandle(hbp->dev->of_node, "hbp,devices", i);
+		hbp_info("dev_np %s np %s\n", dev_np->name, np->name);
 		if (dev_np && (dev_np == np)) {
 			ret = of_property_read_u32(np, "device,id", &id);
 			if (ret < 0) {
@@ -98,6 +100,32 @@ static int hbp_match_device_id(struct device_node *np, struct hbp_core *hbp)
 	return id;
 }
 
+int hbp_match_bus(struct device *dev, struct bus_operations **bus_ops)
+{
+	struct device_node *np = NULL;
+	struct device *bus_dev = NULL;
+	struct spi_bus *bus;
+
+	np = of_parse_phandle(dev->of_node, "device,attached_bus", 0);
+	if (!np) {
+		hbp_err("Failed to find attached bus\n");
+		return -ENODEV;
+	}
+
+	bus_dev = bus_find_device_by_name(&platform_bus_type, NULL, np->full_name);
+	if (!bus_dev) {
+		hbp_err("Failed to match bus: %s, defer retry\n", np->full_name);
+		return -EPROBE_DEFER;
+	}
+
+	hbp_info("matched bus:%s\n", np->full_name);
+	bus = (struct spi_bus *)bus_dev->platform_data;
+	if (bus) {
+		*bus_ops = &bus->spi_ops;
+	}
+
+	return 0;
+}
 
 int hbp_register_devices(void *priv,
 			 struct device *dev,
@@ -109,10 +137,18 @@ int hbp_register_devices(void *priv,
 	struct device_node *np = dev->of_node;
 	struct hbp_core *hbp = g_hbp;
 	struct hbp_device *hbp_dev;
+	int ret = 0;
 
 	if (!hbp) {
 		return -EPROBE_DEFER;
 	}
+
+	//match bus, spi or i2c
+	ret = hbp_match_bus(dev, bus_ops);
+	if (ret < 0) {
+		return ret;
+	}
+	hbp_info("%s start.\n", dev->of_node->name);
 
 	id = hbp_match_device_id(np, hbp);
 	if (id < 0 || id >= MAX_DEVICES) {
@@ -120,26 +156,36 @@ int hbp_register_devices(void *priv,
 		return -ENODEV;
 	}
 
+	hbp->active_id = id;
+
 	if (hbp->devices[id]) {
 		hbp_info("device already registered\n");
 		return 0;
 	}
 
-	hbp_dev = hbp_device_create(priv, hbp, dev, dev_ops, bus_ops, id);
+	hbp_dev = hbp_device_create(priv, hbp, dev, dev_ops, id);
 	if (!hbp_dev) {
-		hbp_err("device id not match\n");
 		return -ENODEV;
+	} else if (hbp_dev && hbp_dev->errReason < 0) {
+		hbp_err("device create error\n");
+		ret = hbp_dev->errReason;
+		if (hbp_dev) {
+			kfree(hbp_dev);
+			hbp_dev = NULL;
+			hbp_err("hbp_dev is free\n");
+		}
+		return ret;
 	}
 
 	hbp->devices[id] = hbp_dev;
 
-	hbp->dev_info.panels_attached++;
 	hbp->dev_info.device[id].id = id;
 	memcpy(hbp->dev_info.device[id].ic_name, chip->ic_name, strlen(chip->ic_name));
 	memcpy(hbp->dev_info.device[id].vendor, chip->vendor, strlen(chip->vendor));
 
 	hbp->dev_info.device[id].max_x = hbp_dev->hw.resolution.x;
 	hbp->dev_info.device[id].max_y = hbp_dev->hw.resolution.y;
+	hbp->dev_info.panels_attached++;
 
 	hbp_info("device %s %s registed, panel attached %d\n",
 		 hbp->dev_info.device[id].ic_name,
@@ -178,6 +224,31 @@ bool hbp_power_on_in_suspend(int index)
 }
 EXPORT_SYMBOL(hbp_power_on_in_suspend);
 
+void hbp_dev_ctrl_power_reconfig(void)
+{
+	hbp_info("%s is called.\n", __func__);
+
+	if (!g_hbp) {
+		hbp_err("%s: g_hbp is null.\n", __func__);
+	} else {
+		hbp_info("%s active_id is %d.\n", __func__, g_hbp->active_id);
+		hbp_power_ctrl(g_hbp->devices[g_hbp->active_id], power_reconfig);
+	}
+}
+EXPORT_SYMBOL(hbp_dev_ctrl_power_reconfig);
+
+void hbp_dev_ctrl_hw_reset(void)
+{
+	hbp_info("%s is called.\n", __func__);
+
+	if (!g_hbp) {
+		hbp_err("%s: g_hbp is null.\n", __func__);
+	} else {
+		hbp_info("%s active_id is %d.\n", __func__, g_hbp->active_id);
+		hbp_power_ctrl(g_hbp->devices[g_hbp->active_id], hw_reset_config);
+	}
+}
+EXPORT_SYMBOL(hbp_dev_ctrl_hw_reset);
 
 static int hbp_sync_with_daemon(struct hbp_core *hbp, int id, hbp_panel_event event)
 {
@@ -224,6 +295,10 @@ void hbp_state_notify(struct hbp_core *hbp, int id, hbp_panel_event event)
 	//(2) if tddi ic, need update
 	if (event == HBP_PANEL_EVENT_SUSPEND) {
 		event = HBP_PANEL_EVENT_EARLY_SUSPEND;
+	}
+
+	if (event == HBP_PANEL_EVENT_RESUME) {
+		event = HBP_PANEL_EVENT_EARLY_RESUME;
 	}
 
 	if (hbp->states[id].id == id &&
@@ -365,7 +440,11 @@ static struct file_operations hbp_core_fops = {
 static int core_register_dev(struct hbp_core *hbp)
 {
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0))
+	hbp->cls = class_create(HBP_CORE);
+#else
 	hbp->cls = class_create(THIS_MODULE, HBP_CORE);
+#endif
 	if (IS_ERR(hbp->cls)) {
 		hbp_fatal("Failed to class create\n");
 		return -EINVAL;
@@ -396,17 +475,21 @@ err_cls:
 static int hbp_main_dt(struct device_node *np, struct hbp_core *hbp)
 {
 	int ret = 0;
+    u32 panel_expected  = 1;
 
 	ret = of_property_read_string(np, "hbp,project", &hbp->prj);
 	if (ret < 0) {
 		hbp_err("failed to read project\n");
+		goto end;
 	}
 
-	hbp->dev_info.panels_expect = 1;
-	ret = of_property_read_u8(np, "hbp,panels", &hbp->dev_info.panels_expect);
+	ret = of_property_read_u32(np, "hbp,panels", &panel_expected);
 	if (ret < 0) {
 		hbp_err("failed to read supported panels, set to 1\n");
 	}
+
+	hbp->dev_info.panels_expect = panel_expected;
+	hbp_info("hbp expect panels = %d", hbp->dev_info.panels_expect);
 
 	memcpy(&hbp->dev_info.project, hbp->prj, strlen(hbp->prj));
 
@@ -416,6 +499,7 @@ static int hbp_main_dt(struct device_node *np, struct hbp_core *hbp)
 		return ret;
 	}
 
+end:
 	return 0;
 }
 
@@ -462,7 +546,6 @@ static int hbp_core_probe(struct platform_device *pdev)
 		goto exit;
 	}
 
-	hw_interface_init();
 	hbp_register_sysfs(hbp);
 
 	g_hbp = hbp;
@@ -471,8 +554,11 @@ exit:
 	hbp_info("exit %d.\n", ret);
 	return ret;
 }
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+static void hbp_core_remove(struct platform_device *pdev)
+#else
 static int hbp_core_remove(struct platform_device *pdev)
+#endif
 {
 	struct hbp_core *hbp = platform_get_drvdata(pdev);
 
@@ -485,7 +571,10 @@ static int hbp_core_remove(struct platform_device *pdev)
 	kfree(hbp);
 
 	hbp_info("exit.\n");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#else
 	return 0;
+#endif
 }
 
 static void hbp_core_irq_wake(struct hbp_core *hbp, bool wake)
@@ -542,6 +631,7 @@ static struct platform_driver hbp_core_driver_platform = {
 
 static int __init register_hbp_core_driver(void)
 {
+	hw_interface_init();
 	return platform_driver_register(&hbp_core_driver_platform);
 }
 

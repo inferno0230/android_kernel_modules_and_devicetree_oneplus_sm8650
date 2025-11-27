@@ -18,13 +18,6 @@
 #include <linux/mm.h>
 #include <linux/cgroup.h>
 #include <../../../mm/slab.h>
-#if IS_ENABLED(CONFIG_CGROUP_SCHED)
-#define SA_CGROUP_SYS_BACKGROUND	(1)
-#define SA_CGROUP_FOREGROUND		(2)
-#define SA_CGROUP_BACKGROUND		(3)
-#define SA_CGROUP_TOP_APP			(4)
-#define SA_CGROUP_UX				(9)
-#endif
 #define ohm_err(fmt, ...) \
 		printk(KERN_ERR "[OHM_ERR][%s]"fmt, __func__, ##__VA_ARGS__)
 #define ohm_debug(fmt, ...) \

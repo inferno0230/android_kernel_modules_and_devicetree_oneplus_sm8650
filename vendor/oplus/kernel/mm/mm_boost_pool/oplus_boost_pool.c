@@ -516,10 +516,8 @@ int dynamic_boost_pool_free(struct dynamic_boost_pool *pool, struct page *page,
 		return -1;
 	}
 
-	if ((NULL == pool) || (NULL == page)) {
-		pr_err("%s: pool/page is NULL!\n", __func__);
+	if ((NULL == pool) || (NULL == page))
 		return -1;
-	}
 
 	if (dynamic_boost_pool_nr_pages(pool) > pool->low)
 		return -1;

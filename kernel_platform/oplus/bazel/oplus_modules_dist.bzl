@@ -17,15 +17,11 @@ def ddk_copy_to_dist_dir(
     if name == None:
         name = "ddk_oplus_default"
 
-    # 当编译条件存在时，处理条件编译的代码
-    # Handle conditionally compiled code when a compilation condition exists
+    # Handle conditionally compiled code when compilation conditions exist
     if conditional_builds:
-        # 获取从环境变量传递过来的变量, oplus_feature_list 是一个字典
-        # Get variables passed from environment variables
+        # Get variables passed from environment variables; oplus_feature_list is a dictionary.
         oplus_feature_list = oplus_ddk_get_oplus_features()
         for module in module_list:
-            # 当存在该模块的编译条件时，将编译条件与环境变量设置一一对应
-            # 只有所有的条件均符合时，才进行编译
             # When there are compilation conditions for this module,
             # map the compilation conditions to the environment variable settings one-to-one.
             # Only compile if all conditions are met
@@ -49,7 +45,6 @@ def ddk_copy_to_dist_dir(
             else:
                 data.append(":{}".format(module))
     else:
-        # 否则走原生流程
         # raw pass: modules has no conditional compilation options
         for module in module_list:
             data.append(":{}".format(module))

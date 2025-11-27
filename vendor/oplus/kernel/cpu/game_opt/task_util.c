@@ -247,7 +247,7 @@ static int ui_assist_thread_show(struct seq_file *m, void *v)
 	num = 0;
 	for (i = 0; i < result_num; i++) {
 		if (get_task_name(ui_results[i].pid, ui_results[i].task, task_name)) {
-			len += snprintf(ui_page + len, RESULT_PAGE_SIZE - len, "%d;%s;%u\n",
+			len += snprintf(ui_page + len, sizeof(ui_page) - len, "%d;%s;%u\n",
 				ui_results[i].pid, task_name, ui_results[i].wake_count);
 			if (++num >= MAX_UA_RESULT_NUM)
 				break;
@@ -479,6 +479,13 @@ static inline void update_task_runtime(struct task_struct *task, u64 runtime)
 unlock:
 		raw_spin_unlock(&g_lock);
 	}
+}
+
+bool task_is_fair(struct task_struct *task)
+{
+	if ((task->prio >= MAX_RT_PRIO) && (task->prio <= MAX_PRIO-1))
+		return true;
+	return false;
 }
 
 static void sched_stat_runtime_hook(void *unused, struct task_struct *p, u64 runtime, u64 vruntime)

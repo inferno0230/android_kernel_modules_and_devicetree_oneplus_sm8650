@@ -133,7 +133,7 @@ int fqm_dump(struct seq_file *s, void *v)
 		}
 		table = &moni->tables;
 		for (index = 0; index < MAX_FREQ_TABLE_CNT; index++) {
-			if (table->elm[index].min == 0 && table->elm[index].max == 0)
+			if (table->elm[index].updated_time == 0)
 				continue;
 			seq_printf(
 				s, "%lu, %d, %llu, %d, %d, %d, %d, %d, %d, %d, %s\n",
@@ -298,11 +298,12 @@ static void fqm_delayed_work_handler(struct work_struct *work)
 	}
 }
 
-static char callstack[4][64];
 
 bool is_from_pm_dev_qos(struct freq_qos_request *req)
 {
 	int i;
+	char callstack[4][64];
+	memset(callstack, 0, sizeof(callstack));
 
 	snprintf(callstack[0], sizeof(callstack[0]), "%ps", __builtin_return_address(0));
 	snprintf(callstack[1], sizeof(callstack[1]), "%ps", __builtin_return_address(1));

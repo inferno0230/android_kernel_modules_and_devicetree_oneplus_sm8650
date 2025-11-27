@@ -53,12 +53,12 @@ static inline unsigned long sys_freeram(void)
 
 static inline unsigned long sys_inactive_file(void)
 {
-	return global_node_page_state(NR_ACTIVE_FILE);
+	return global_node_page_state(NR_INACTIVE_FILE);
 }
 
 static inline unsigned long sys_active_file(void)
 {
-	return global_node_page_state(NR_INACTIVE_FILE);
+	return global_node_page_state(NR_ACTIVE_FILE);
 }
 
 static inline unsigned long sys_file(void)

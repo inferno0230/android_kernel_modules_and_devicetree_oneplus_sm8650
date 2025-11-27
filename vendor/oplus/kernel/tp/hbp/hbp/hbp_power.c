@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
+#include <linux/pinctrl/consumer.h>
 
 #include "hbp_core.h"
 #include "utils/debug.h"
@@ -61,6 +62,7 @@ int hbp_init_power(struct device *dev, struct hbp_device *hbp_dev)
 {
 	int ret = 0;
 	struct device_node *np = dev->of_node;
+	hbp_info("%s start.\n", dev->of_node->name);
 
 	/*for avdd control init, instead of regulator_get which may return dummy regulator*/
 	hbp_dev->hw.avdd_reg = regulator_get_optional(dev, "power,avdd");

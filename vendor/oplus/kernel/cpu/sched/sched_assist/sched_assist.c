@@ -27,14 +27,21 @@
 #include "sa_balance.h"
 #endif
 
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+#include "sa_group.h"
+#endif
+
 #define HI_MASK		0xFF00000000000000UL
 #define HI_FLAG		0xAB00000000000000UL
+
+static wake_up_new_task_handler_t wunt_handler;
 
 static void set_ux_to_task(struct task_struct *new) {
 	struct pt_regs *childregs = task_pt_regs(new);
 	unsigned long newsp;
 	unsigned long fn_addr;
 	void __user *user_sp_ptr;
+	int ux_state;
 
 	if (is_compat_thread(task_thread_info(new)))
 		newsp = childregs->compat_sp;
@@ -51,19 +58,40 @@ static void set_ux_to_task(struct task_struct *new) {
 	if ((fn_addr & HI_MASK) != HI_FLAG)
 		return;
 
-	oplus_set_ux_state_lock(new, oplus_get_ux_state(current->group_leader), -1, true);
+	ux_state = oplus_get_static_ux_state(current->group_leader);
+	if (ux_state) {
+		oplus_set_ux_state_lock(new, ux_state, -1, true);
+		return;
+	}
+
+	ux_state = oplus_get_inherited_ux_state(current->group_leader);
+	if (ux_state) {
+		oplus_set_ux_state_lock(new, ux_state, INHERIT_UX_MAX, true);
+	}
 }
 
 static void android_rvh_wake_up_new_task_handler(void *unused, struct task_struct *new) {
 	set_ux_to_task(new);
+	/*
+	 * Due to function vendor hook limitation,
+	 * used ext handler pointer to invoke to other module
+	 */
+	if (wunt_handler) {
+		wunt_handler(new);
+	}
 }
+
+void register_wake_up_new_task_ext_handler(wake_up_new_task_handler_t ext_handler)
+{
+	wunt_handler = ext_handler;
+}
+EXPORT_SYMBOL(register_wake_up_new_task_ext_handler);
 
 static int register_scheduler_vendor_hooks(void)
 {
 	int ret;
 
 	/* register vender hook in kernel/sched/fair.c */
-	REGISTER_TRACE_RVH(android_rvh_place_entity, android_rvh_place_entity_handler);
 	REGISTER_TRACE_RVH(android_rvh_check_preempt_tick, android_rvh_check_preempt_tick_handler);
 	REGISTER_TRACE_RVH(android_rvh_can_migrate_task, android_rvh_can_migrate_task_handler);
 #ifndef CONFIG_OPLUS_SYSTEM_KERNEL_QCOM
@@ -102,8 +130,11 @@ static int register_scheduler_vendor_hooks(void)
 	REGISTER_TRACE_RVH(android_rvh_after_enqueue_task, android_rvh_after_enqueue_task_handler);
 	REGISTER_TRACE_RVH(android_rvh_dequeue_task, android_rvh_dequeue_task_handler);
 #endif
-
 	REGISTER_TRACE_RVH(android_rvh_set_cpus_allowed_by_task, android_rvh_set_cpus_allowed_by_task_handler);
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+	REGISTER_TRACE_RVH(android_rvh_cpu_cgroup_online, android_rvh_cpu_cgroup_online_handler);
+#endif
+	REGISTER_TRACE_RVH(android_rvh_set_cpus_allowed_comm, android_rvh_set_cpus_allowed_comm_handler);
 
 	/* register vender hook in fs/exec.c */
 	REGISTER_TRACE_VH(task_rename, task_rename_handler);
@@ -165,6 +196,18 @@ int detect_symbol(void)
 	return 0;
 }
 
+void enable_sched_assist(int step) {
+	static int ux_hooks = 0;
+	ux_hooks |= step;
+
+	if (OPLUS_UX_HOOK_MASK == ux_hooks) {
+		global_sched_assist_enabled |= FEATURE_COMMON;
+	#ifdef CONFIG_OPLUS_FEATURE_SCHED_SPREAD
+		global_sched_assist_enabled |= FEATURE_SPREAD;
+	#endif
+	}
+}
+EXPORT_SYMBOL_GPL(enable_sched_assist);
 
 static int __init oplus_sched_assist_init(void)
 {
@@ -177,15 +220,14 @@ static int __init oplus_sched_assist_init(void)
 	if (ret != 0)
 		return ret;
 
-	global_sched_assist_enabled |= FEATURE_COMMON;
-#ifdef CONFIG_OPLUS_FEATURE_SCHED_SPREAD
-	global_sched_assist_enabled |= FEATURE_SPREAD;
-#endif /* CONFIG_OPLUS_FEATURE_SCHED_SPREAD */
-
 	sched_assist_init_oplus_rq();
 	update_ux_sched_cputopo();
 #ifdef CONFIG_OPLUS_FEATURE_TICK_GRAN
 	resched_timer_init();
+#endif
+
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_GROUP_OPT)
+	oplus_sg_map_init();
 #endif
 
 	ret = register_scheduler_vendor_hooks();
@@ -199,6 +241,11 @@ static int __init oplus_sched_assist_init(void)
 	if (_profile_event_register)
 		/* register a notifier to monitor task exit */
 		(*_profile_event_register)(PROFILE_TASK_EXIT, &process_exit_notifier_block);
+
+#ifdef CONFIG_OPLUS_SYSTEM_KERNEL_QCOM
+	enable_sched_assist(OPLUS_UX_HOOK_MASK);
+#endif
+
 	ux_debug("sched assist init succeed!\n");
 	return 0;
 }

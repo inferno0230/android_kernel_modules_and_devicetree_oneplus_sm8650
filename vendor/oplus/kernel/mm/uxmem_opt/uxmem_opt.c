@@ -39,9 +39,10 @@
 #include <linux/delay.h>
 #include "../../mm/internal.h"
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
-#include "../mm_osvelte/mm-config.h"
+#include "mm_osvelte/mm-config.h"
 #endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
 #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
 #include <../kernel/oplus_cpu/sched/sched_info/osi_healthinfo.h>
 #include "uxmem_opt.h"
@@ -550,16 +551,6 @@ static int ux_page_pool_init(void)
 	return 0;
 }
 
-inline int task_is_fg(struct task_struct *tsk)
-{
-	int cur_uid;
-
-	cur_uid = task_uid(tsk).val;
-	if (is_fg(cur_uid))
-		return 1;
-	return 0;
-}
-
 static inline bool current_is_key_task(void)
 {
 	unsigned long im_flag = oplus_get_im_flag(current);
@@ -567,7 +558,6 @@ static inline bool current_is_key_task(void)
 	return test_task_ux(current) || rt_task(current)
 		|| test_bit(IM_FLAG_SURFACEFLINGER, &im_flag)
 		|| test_bit(IM_FLAG_SYSTEMSERVER_PID, &im_flag)
-		|| task_is_fg(current)
 		|| (current->flags & PF_WQ_WORKER);
 }
 
@@ -576,11 +566,12 @@ static void __nocfi get_page_from_uxmempool(void *data, gfp_t gfp_mask, int orde
 {
 	struct page *page = NULL;
 
-	if (current_is_key_task() && !(gfp_mask & __GFP_DMA32)) {
+	if ((current_is_key_task() || ta_task(current)) && !(gfp_mask & __GFP_DMA32)) {
 		page = ux_page_pool_alloc_pages(order, migratetype);
 		if (page) {
 			if (!page_count(page))
-				prep_new_page_dup(page, order, gfp_mask, ALLOC_WMARK_LOW);
+				/* clear __GFP_DIRECT_RECLAIM because preempt is disabled in vendor hook's call back */
+				prep_new_page_dup(page, order, gfp_mask & ~(__GFP_DIRECT_RECLAIM), ALLOC_WMARK_LOW);
 			else if (order && (gfp_mask & __GFP_COMP))
 				prep_compound_page_dup(page, order);
 		}

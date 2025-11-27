@@ -3216,6 +3216,9 @@ static int wma_wake_event_packet(
 
 	wma_debug("Number of delayed packets received = %d",
 		  wake_info->delayed_pkt_count);
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+	wma_info("Wake event packet %s", wma_wow_wake_reason_str(wake_info->wake_reason));
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 
 	switch (wake_info->wake_reason) {
 	case WOW_REASON_AUTH_REQ_RECV:
@@ -3496,6 +3499,23 @@ static void wma_wake_event_log_reason(t_wma_handle *wma,
 	/* "Unspecified" means APPS triggered wake, else firmware triggered */
 	if (wake_info->wake_reason != WOW_REASON_UNSPECIFIED) {
 		vdev = &wma->interfaces[wake_info->vdev_id];
+		#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+		//add for  connectivity power monitor
+		if(wake_info->wake_reason == WOW_REASON_BEACON_RECV) {
+		    char event_msg[256] = {'\0'};
+		    snprintf(event_msg, sizeof(event_msg), "wakeup_mgmt=%s", wma_wow_wake_reason_str(wake_info->wake_reason));
+		    oplusLpmSendUevent(event_msg);
+		}
+		/* Special handling for LOCAL_DATA_UC_DROP wakeup */
+		//add for 9872014 connectivity power monitor
+		if (wake_info->wake_reason == WOW_REASON_LOCAL_DATA_UC_DROP) {
+		    wma_nofl_info("Reporting WOW wakeup to framework: LOCAL_DATA_UC_DROP (%d)",wake_info->wake_reason);
+		    char event_msg[256] = {'\0'};
+		    snprintf(event_msg, sizeof(event_msg), "wakeup_mgmt=%s", wma_wow_wake_reason_str(wake_info->wake_reason));
+		    /* Report to framework via uevent */
+		    oplusLpmSendUevent(event_msg);
+		}
+		#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 		wma_nofl_info("WLAN triggered wakeup: %s (%d), vdev: %d (%s)",
 			      wma_wow_wake_reason_str(wake_info->wake_reason),
 			      wake_info->wake_reason,

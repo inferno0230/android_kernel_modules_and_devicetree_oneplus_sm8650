@@ -183,15 +183,6 @@ do {								            \
 	}							                \
 } while (0)
 
-enum {
-	CGROUP_RESV = 0,
-	CGROUP_DEFAULT = 1,			/* sys */
-	CGROUP_FOREGROUND,
-	CGROUP_BACKGROUND,
-	CGROUP_TOP_APP,
-
-	CGROUP_NRS,
-};
 extern int g_osi_debug;
 void osi_base_proc_init(struct proc_dir_entry *pde);
 void osi_base_proc_deinit(struct proc_dir_entry *pde);

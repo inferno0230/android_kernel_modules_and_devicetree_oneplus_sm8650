@@ -666,7 +666,7 @@ static void __exit magcvr_mxm1120_exit(void)
 	i2c_del_driver(&magcvr_mxm1120_i2c_driver);
 }
 
-late_initcall(magcvr_mxm1120_init);
+module_init(magcvr_mxm1120_init);
 module_exit(magcvr_mxm1120_exit);
 
 MODULE_DESCRIPTION("Magcvr mxm1120 Driver");

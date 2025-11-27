@@ -26,7 +26,9 @@ struct pwrkey_monitor_data g_bright_data = {
 	.error_count = 0,
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
 	.active_panel = NULL,
+	.active_panel_second = NULL,
 	.cookie = NULL,
+	.cookie_second = NULL,
 #endif
 };
 
@@ -303,6 +305,33 @@ static int bright_fb_notifier_callback(struct notifier_block *self,
 
 	return 0;
 }
+#if IS_ENABLED(CONFIG_OPLUS_MTK_DRM_SUB_NOTIFY)
+static int bright_fb_notifier_sub_callback(struct notifier_block *self,
+	unsigned long event, void *data)
+{
+	switch (event) {
+	case THEIA_PANEL_BLANK_EVENT:
+		g_bright_data.blank = *(int *)data;
+		if (g_bright_data.status != BLACK_STATUS_CHECK_DEBUG) {
+			if (g_bright_data.blank == THEIA_PANEL_BLANK_VALUE) {
+				delete_timer_bright("FINISH_FB", true);
+				del_timer(&g_recovery_data.timer);
+				BRIGHT_DEBUG_PRINTK("bright_fb_notifier_sub_callback: del_timer g_recovery_data del in mtk\n");
+				BRIGHT_DEBUG_PRINTK("bright_fb_notifier_sub_callback: del timer, status:%d blank:%d\n",
+					g_bright_data.status, g_bright_data.blank);
+			}
+		} else {
+			BRIGHT_DEBUG_PRINTK("bright_fb_notifier_sub_callback debug: status:%d blank:%d\n",
+				g_bright_data.status, g_bright_data.blank);
+		}
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+#endif
 #endif
 
 static int bright_screen_cancel_proc_show(struct seq_file *seq_file, void *data)
@@ -371,6 +400,23 @@ int br_register_panel_event_notify(void)
 	g_bright_data.cookie = cookie;
 	return 0;
 }
+
+int br_register_panel_second_event_notify(void)
+{
+	void *data = NULL;
+	void *cookie = NULL;
+
+	cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_SECONDARY,
+				PANEL_EVENT_NOTIFIER_CLIENT_SECONDARY_THEIA_BRIGHT,
+				g_bright_data.active_panel_second, bright_fb_notifier_callback, data);
+
+	if (!cookie) {
+		BRIGHT_DEBUG_PRINTK("br_register_panel_event_notify failed\n");
+		return -1;
+	}
+	g_bright_data.cookie_second = cookie;
+	return 0;
+}
 #endif
 
 void bright_screen_check_init(void)
@@ -389,6 +435,14 @@ void bright_screen_check_init(void)
 		BRIGHT_DEBUG_PRINTK("bright_screen_check_init, register fb notifier fail\n");
 		return;
 	}
+#if IS_ENABLED(CONFIG_OPLUS_MTK_DRM_SUB_NOTIFY)
+	g_bright_data.fb_notif_sub.notifier_call = bright_fb_notifier_sub_callback;
+	if (mtk_disp_sub_notifier_register("oplus_theia_sub", &g_bright_data.fb_notif_sub)) {
+		g_bright_data.status = BRIGHT_STATUS_INIT_FAIL;
+		BRIGHT_DEBUG_PRINTK("bright_screen_check_init, register sub fb notifier fail\n");
+		return;
+	}
+#endif
 #endif
 
 	sprintf(g_bright_data.error_id, "%s", "null");
@@ -413,7 +467,12 @@ void bright_screen_exit(void)
 #if IS_ENABLED(CONFIG_DRM_PANEL_NOTIFY) || IS_ENABLED(CONFIG_QCOM_PANEL_EVENT_NOTIFIER)
 	if (g_bright_data.active_panel && g_bright_data.cookie)
 		panel_event_notifier_unregister(g_bright_data.cookie);
+	if (g_bright_data.active_panel_second && g_bright_data.cookie_second)
+		panel_event_notifier_unregister(g_bright_data.cookie_second);
 #elif IS_ENABLED(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY)
 	mtk_disp_notifier_unregister(&g_bright_data.fb_notif);
+	#if IS_ENABLED(CONFIG_OPLUS_MTK_DRM_SUB_NOTIFY)
+	mtk_disp_sub_notifier_unregister(&g_bright_data.fb_notif_sub);
+	#endif
 #endif
 }

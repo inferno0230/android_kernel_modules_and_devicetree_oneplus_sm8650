@@ -13,9 +13,12 @@
 #define MAX_TID_COUNT 256
 #define MAX_TASK_NR 18
 #define RESULT_PAGE_SIZE 1024
+#define MAX_TRACKED_TASK_NUM 10
+#define MAX_SCHED_CLUSTER_NUM 5
 
 extern struct proc_dir_entry *game_opt_dir;
 extern struct proc_dir_entry *early_detect_dir;
+extern struct proc_dir_entry *critical_heavy_boost_dir;
 
 extern pid_t game_pid;
 
@@ -25,8 +28,10 @@ extern atomic_t have_valid_render_pid;
 extern int g_debug_enable;
 extern inline void systrace_c_printk(const char *msg, unsigned long val);
 extern inline void systrace_c_signed_printk(const char *msg, long val);
+extern inline void htb_systrace_c_printk(const char *prefix, int digit, const char *comm, int val);
 
 int cpu_load_init(void);
+void frame_load_init(void);
 int cpufreq_limits_init(void);
 int task_util_init(void);
 int rt_info_init(void);
@@ -36,6 +41,10 @@ int debug_init(void);
 
 bool get_task_name(pid_t pid, struct task_struct *in_task, char *name);
 void ui_assist_threads_wake_stat(struct task_struct *task);
+bool task_is_fair(struct task_struct *task);
+void add_tasks_to_frame_group(pid_t *tracked_pids, int tracked_pid_num);
+void cl_notify_frame_produce(void);
+void fl_notify_frame_produce(void);
 
 /*----------------------------- early detect start -----------------------------*/
 enum ED_BOOST_TYPE {
@@ -50,5 +59,14 @@ void ed_freq_boost_request(unsigned int boost_type);
 void ed_render_wakeup_times_stat(struct task_struct *task);
 void ed_set_render_task(struct task_struct *render_task);
 /*----------------------------- early detect end -----------------------------*/
+
+enum CH_BOOST_ACTION {
+	CT_REQUSET_BOOST,
+	CT_RELEASE_BOOST,
+	HT_REQUSET_BOOST,
+	HT_RELEASE_BOOST,
+};
+
+void ch_freq_boost_request(cpumask_var_t control_cpumask, enum CH_BOOST_ACTION action);
 
 #endif /*__GAME_CTRL_H__*/

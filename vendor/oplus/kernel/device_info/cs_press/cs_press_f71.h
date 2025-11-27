@@ -316,6 +316,8 @@ typedef struct{
     uint8_t muti_tap_judge_time;
 } trigger_strength_config;
 
+#define BUS_ERROR_MSG_SIZE          128
+#define BUS_ERROR_MSG_CNT           5
 struct cs_press_t {
     int major;
     struct class *class;
@@ -345,6 +347,7 @@ struct cs_press_t {
     struct thermal_zone_device *cs_thermal_zone_device;
     int cs_shell_themal_init_flag;
     int cs_shell_themal_enable;
+    int update_done;
 
     int camera_key_mode;
     bool is_light_tap_down;
@@ -356,8 +359,10 @@ struct cs_press_t {
     trigger_strength_config realtime_cfg[CAMERA_KEY_CFG_MAX];
     trigger_strength_config delay_cfg[CAMERA_KEY_CFG_MAX];
     unsigned int cfg_chosen;
+    bool quick_on_closed;
     /* health monitor */
     int32_t dac_offset[CH_COUNT];
+    int32_t dac_offset_diff[CH_COUNT];
     int32_t dac_noise_var[CH_COUNT];
     int16_t tap_force_min;
     int16_t tap_force_max;
@@ -369,6 +374,11 @@ struct cs_press_t {
     int hard_reset_cnt;
     int soft_reset_cnt;
     int wdt_reset_cnt;
+    int bus_error_cnt;
+    char bus_error_msg[BUS_ERROR_MSG_CNT][BUS_ERROR_MSG_SIZE];
+    int32_t dac_offset_boot[CH_COUNT];
+    int32_t dac_noise_var_boot[CH_COUNT];
+    char fw_update_error;
 
     /* framebuffer callbacks notifier */
     bool is_suspended;
@@ -393,7 +403,11 @@ struct cs_press_t {
     struct delayed_work update_worker;
     struct delayed_work shell_temp_worker;
     struct delayed_work delay_run_worker;
+    struct pinctrl *pinctrl;
+    struct pinctrl_state *irq_pin_input;
 
+    /**log**/
+    int is_update_log;
 };
 
 enum PRESS_LEVEL
@@ -433,6 +447,7 @@ enum CAMERA_KEY_IC_MODE
     CAMERA_KEY_IC_DELAY_EVENT_MODE = 0x01,
     CAMERA_KEY_IC_REALTIME_EVENT_MODE = 0x02,
     CAMERA_KEY_IC_SLEEP_EVENT_MODE = 0x04,
+    CAMERA_KEY_IC_NONE_EVENT_MODE = 0xFF,
 };
 
 enum CAMERA_KEY
@@ -452,7 +467,7 @@ enum EVENT_ACTION_TAP_BIT
     BIT_ACTION_TAP_DOWN = 0x01,
     BIT_ACTION_TAP_UP = 0x02,
     BIT_ACTION_SHORT_TAP = 0x04,
-    BIT_ACTION_LONG_TAP = 0x08,
+    BIT_ACTION_PHYSICAL_TOUCHING = 0x08,
     BIT_ACTION_LONGER_TAP = 0x10,
     BIT_ACTION_DOUBLE_TAP = 0x20,
     BIT_ACTION_TRIBLE_TAP = 0x40,
@@ -486,13 +501,6 @@ enum CAMERA_KEY_ACTION
     ACTION_DOWN = 1,
 };
 
-enum CAMERA_KEY_LEVEL
-{
-    LEVEL_UNKNOWN = -1,
-    LEVEL_LIGHT = 0x01,
-    LEVEL_HEAVY = 0x02,
-};
-
 enum EVENT_AREA_BIT
 {
     BIT_AREA_1 = 0x01,
@@ -502,9 +510,10 @@ enum EVENT_AREA_BIT
 
 enum EVENT_LEVEL_BIT
 {
-    BIT_LEVEL_LIGHT = 0x01,
-    BIT_LEVEL_HEAVY = 0x02,
-    BIT_LEVEL_HEAVIER = 0x04,
+    BIT_LEVEL_UNKNOWN = -1,
+    BIT_LEVEL_TOUCH = 0x01,
+    BIT_LEVEL_LIGHT = 0x02,
+    BIT_LEVEL_HEAVY = 0x04,
 };
 
 struct scene_para_t

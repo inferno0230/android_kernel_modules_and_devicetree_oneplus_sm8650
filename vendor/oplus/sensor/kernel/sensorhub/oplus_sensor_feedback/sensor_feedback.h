@@ -32,7 +32,7 @@ struct sensor_fb_conf {
 	char *fb_event_id;
 };
 
-
+#if !IS_ENABLED(CONFIG_OPLUS_FEATURE_TRACE_SENSOR)
 enum sensor_fb_event_id {
 	FD_HEAD_EVENT_ID = 0,
 	/*1~100*/
@@ -162,6 +162,19 @@ enum sensor_fb_event_id {
 	/*1000*/
 	ALAILABLE_SENSOR_LIST_ID = 1000,
 
+	/*1001~1099*/
+	PICKUP_COUNT_ID = 1001,
+	ELEVATOR_COUNT_ID = 1002,
+	MEASUREMENT_COUNT_ID = 1003,
+	POCKET_COUNT_ID = 1004,
+	GESTURE_PROX_COUNT_ID = 1005,
+	PHONE_PROX_COUNT_ID = 1006,
+	SHAKING_COUNT_ID = 1007,
+	FP_DISPLAY_COUNT_ID = 1008,
+	PHONE_HEAD_COUNT_ID = 1009,
+	USND_NEAR_PRECISION_ID = 1010,
+	USND_FAR_PRECISION_ID = 1011,
+
 	/*1100~1200*/
 	CCT_I2C_ERR_ID = 1100,
 
@@ -170,6 +183,7 @@ enum sensor_fb_event_id {
 	HAL_QMI_ERROR = 10001,
 	HAL_SENSOR_TIMESTAMP_ERROR = 10002,
 };
+#endif
 
 struct fd_data {
 	int data_x;

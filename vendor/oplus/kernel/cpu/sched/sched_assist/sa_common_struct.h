@@ -79,7 +79,12 @@ struct oplus_task_struct {
 	u64 vruntime;
 	u64 preset_vruntime;
 	s64 cfs_delta;
+	/* contains ux state
+	 1. if static and inherited ux both exist, static ux stores in ux_state, inherited ux in sub_ux_state.
+	 2. if only static ux exists, static ux stores in ux_state.
+	 2. if only inherited ux exists, inherited ux stores in ux_state */
 	int ux_state;
+	int sub_ux_state;
 	u8 ux_depth;
 	s8 ux_priority;
 	s8 ux_nice;
@@ -87,6 +92,12 @@ struct oplus_task_struct {
 	pid_t affinity_pid;
 	pid_t affinity_tgid;
 	unsigned long state;
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_QOS_SCHED)
+	int qos_level;
+	int qos_recover_prio;
+	struct mutex qs_mutex;
+#endif
+	atomic_t is_vip_mvp;
 /*#if IS_ENABLED(CONFIG_OPLUS_FEATURE_ABNORMAL_FLAG)*/
 	int abnormal_flag;
 /*#endif*/
@@ -123,6 +134,12 @@ struct oplus_task_struct {
 /*#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)*/
 	struct locking_info lkinfo;
 /*#endif*/
+
+/*#if IS_ENABLED(CONFIG_SCX_SCHED_ENABLE)*/
+	int tick_hit_count;
+	unsigned long start_jiffies;
+/*#endif*/
+
 /*#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FDLEAK_CHECK)*/
 	u8 fdleak_flag;
 /*#endif*/
@@ -138,6 +155,10 @@ struct oplus_task_struct {
 	u64 snap_run_delay;
 	unsigned long snap_pcount;
 /*#endif*/
+
+#if IS_ENABLED(CONFIG_OPLUS_SCHED_TUNE)
+	int stune_idx;
+#endif
 
 /*#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)*/
 	atomic_t pipeline_cpu;

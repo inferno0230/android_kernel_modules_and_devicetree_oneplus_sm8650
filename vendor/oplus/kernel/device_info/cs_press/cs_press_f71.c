@@ -29,7 +29,7 @@
 #endif
 const char *cs_driver_ver = "1.13";
 
-#define PROC_FOPS_NUM  27
+#define PROC_FOPS_NUM  29
 #define PROC_NAME_LEN  32
 
 #ifndef ALIENTEK
@@ -64,7 +64,7 @@ static DEFINE_MUTEX(press_lock);
 static struct cs_press_t g_cs_press;
 
 #define NORMAL_GEAT_2LEVLE_EN 1
-#define FW_ACTION_HOTPLUG 1 
+#define FW_ACTION_HOTPLUG 1
 
 static int game_geat[PRESS_NUM] = {50, 80, 120};
 #if NORMAL_GEAT_2LEVLE_EN
@@ -104,6 +104,7 @@ void cs_press_struct_init(void)
 {
     g_cs_press.update_type = HIGH_VER_FILE_UPDATE;/*1:force update, 0:to higher ver update*/
     g_cs_press.updating_flag = 0;
+    g_cs_press.update_done = 0;
     g_cs_press.game_status = 0;                   /*bit0 game,bit1 setting,bit2 camera*/
     g_cs_press.normal_left_geat_val = 50;
     g_cs_press.normal_right_geat_val = 80;
@@ -153,6 +154,7 @@ static int cs_i2c_read_bytes(struct i2c_client *client, unsigned char reg_addr, 
         ret = i2c_transfer(adapter, msg, sizeof(msg) / sizeof(struct i2c_msg));
         if(ret <= 0){
             LOG_ERR("i2c read failed! err_code:%d\n",ret);
+            msleep(20);
         }else{
             break;
         }
@@ -204,6 +206,7 @@ static int cs_i2c_write_bytes(struct i2c_client *client, unsigned char reg_addr,
         ret = i2c_transfer(adapter, &msg, 1);
         if(ret <= 0){
             LOG_ERR("i2c write failed! err_code:%d\n", ret);
+            msleep(20);
         }else if(ret > 0){
             break;
         }
@@ -258,6 +261,7 @@ static int cs_i2c_read_bytes_by_u16_addr(struct i2c_client *client, unsigned sho
         ret = 0;
     } else {
         LOG_ERR("i2c read failed! err_code:%d\n",ret);
+        msleep(20);
     }
     return ret;
 }
@@ -305,6 +309,7 @@ static int cs_i2c_write_bytes_by_u16_addr(struct i2c_client *client, unsigned sh
     if(ret < 0)
     {
         LOG_ERR("i2c write failed! err_code:%d\n",ret);
+        msleep(20);
     }
     kfree(t_buf);
     return ret;
@@ -320,6 +325,7 @@ static int cs_i2c_write_bytes_by_u16_addr(struct i2c_client *client, unsigned sh
 static int cs_press_iic_write(unsigned char regAddress, unsigned char *dat, unsigned int length)
 {
     int ret = 0;
+    int i = 0;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
     char payload[1024] = {0x00};
 #endif
@@ -340,6 +346,11 @@ static int cs_press_iic_write(unsigned char regAddress, unsigned char *dat, unsi
                    ret, regAddress, length, dat, length);
         oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_BUS_TRANS_TYPE, payload);
 #endif
+        i = g_cs_press.bus_error_cnt % BUS_ERROR_MSG_CNT;
+        memset(g_cs_press.bus_error_msg[i], 0, BUS_ERROR_MSG_SIZE);
+        scnprintf(g_cs_press.bus_error_msg[i], sizeof(g_cs_press.bus_error_msg[i]) - 1,
+                   "%d WrErr%d %u[%*ph]%u", g_cs_press.bus_error_cnt, ret, regAddress, length, dat, length);
+        g_cs_press.bus_error_cnt++;
         return -1;
     }
     return 0;
@@ -355,6 +366,7 @@ static int cs_press_iic_write(unsigned char regAddress, unsigned char *dat, unsi
 static int cs_press_iic_read(unsigned char regAddress, unsigned char *dat, unsigned int length)
 {
     int ret = 0;
+    int i = 0;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
     char payload[1024] = {0x00};
 #endif
@@ -377,6 +389,11 @@ static int cs_press_iic_read(unsigned char regAddress, unsigned char *dat, unsig
                    ret, regAddress, length, dat, length);
         oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_BUS_TRANS_TYPE, payload);
 #endif
+        i = g_cs_press.bus_error_cnt % BUS_ERROR_MSG_CNT;
+        memset(g_cs_press.bus_error_msg[i], 0, BUS_ERROR_MSG_SIZE);
+        scnprintf(g_cs_press.bus_error_msg[i], sizeof(g_cs_press.bus_error_msg[i]) - 1,
+                   "%d RdErr%d %u[%*ph]%u", g_cs_press.bus_error_cnt, ret, regAddress, length, dat, length);
+        g_cs_press.bus_error_cnt++;
         return -1;
     }
     return 0;
@@ -392,6 +409,7 @@ static int cs_press_iic_read(unsigned char regAddress, unsigned char *dat, unsig
 static int cs_press_iic_write_double_reg(unsigned short regAddress, unsigned char *dat, unsigned int length)
 {
     int ret = 0;
+    int i = 0;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
     char payload[1024] = {0x00};
 #endif
@@ -414,6 +432,11 @@ static int cs_press_iic_write_double_reg(unsigned short regAddress, unsigned cha
                    ret, regAddress, length, dat, length);
         oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_BUS_TRANS_TYPE, payload);
 #endif
+        i = g_cs_press.bus_error_cnt % BUS_ERROR_MSG_CNT;
+        memset(g_cs_press.bus_error_msg[i], 0, BUS_ERROR_MSG_SIZE);
+        scnprintf(g_cs_press.bus_error_msg[i], sizeof(g_cs_press.bus_error_msg[i]) - 1,
+                   "%d WrDbErr%d %u[%*ph]%u", g_cs_press.bus_error_cnt, ret, regAddress, length, dat, length);
+        g_cs_press.bus_error_cnt++;
     }
     return ret;
 }
@@ -428,6 +451,7 @@ static int cs_press_iic_write_double_reg(unsigned short regAddress, unsigned cha
 static int cs_press_iic_read_double_reg(unsigned short regAddress, unsigned char *dat, unsigned int length)
 {
     int ret = 0;
+    int i = 0;
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
     char payload[1024] = {0x00};
 #endif
@@ -450,6 +474,11 @@ static int cs_press_iic_read_double_reg(unsigned short regAddress, unsigned char
                    ret, regAddress, length, dat, length);
         oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_BUS_TRANS_TYPE, payload);
 #endif
+        i = g_cs_press.bus_error_cnt % BUS_ERROR_MSG_CNT;
+        memset(g_cs_press.bus_error_msg[i], 0, BUS_ERROR_MSG_SIZE);
+        scnprintf(g_cs_press.bus_error_msg[i], sizeof(g_cs_press.bus_error_msg[i]) - 1,
+                   "%d RdDbErr%d %u[%*ph]%u", g_cs_press.bus_error_cnt, ret, regAddress, length, dat, length);
+        g_cs_press.bus_error_cnt++;
     }
     return ret;
 }
@@ -646,23 +675,28 @@ int cs_press_set_mode(int mode)
     unsigned char reg_active[2] = {AP_RD_APPLICATION_SATUS_REG, 0xab};
     int retry = 20;
 
-    switch (mode) {
-    case CAMERA_KEY_DEFAULT_MODE:
-        ic_mode = CAMERA_KEY_IC_DEFAULT_EVENT_MODE;
-        break;
-    case CAMERA_KEY_CAMERA_MODE:
-        ic_mode = CAMERA_KEY_IC_REALTIME_EVENT_MODE;
-        break;
-    case CAMERA_KEY_POPUP_MODE:
-        ic_mode = CAMERA_KEY_IC_DELAY_EVENT_MODE;
-        break;
-    case CAMERA_KEY_SLEEP_MODE:
-        ic_mode = CAMERA_KEY_IC_SLEEP_EVENT_MODE;
-        break;
-    default:
-        break;
+    if (g_cs_press.quick_on_closed && (mode != CAMERA_KEY_CAMERA_MODE)) {
+        ic_mode = CAMERA_KEY_IC_NONE_EVENT_MODE;
+    } else {
+        switch (mode) {
+        case CAMERA_KEY_DEFAULT_MODE:
+            ic_mode = CAMERA_KEY_IC_DEFAULT_EVENT_MODE;
+            break;
+        case CAMERA_KEY_CAMERA_MODE:
+            ic_mode = CAMERA_KEY_IC_REALTIME_EVENT_MODE;
+            break;
+        case CAMERA_KEY_POPUP_MODE:
+            ic_mode = CAMERA_KEY_IC_DELAY_EVENT_MODE;
+            break;
+        case CAMERA_KEY_SLEEP_MODE:
+            ic_mode = CAMERA_KEY_IC_SLEEP_EVENT_MODE;
+            break;
+        default:
+            break;
+        }
     }
-    LOG_INFO("%s: mode = %d (ic mode = 0x%02x)\n", __func__, mode, ic_mode);
+    LOG_INFO("%s: mode = %d (ic mode = 0x%02x%s)\n", __func__,
+                mode, ic_mode, g_cs_press.quick_on_closed ? ", quick on closed..." : "");
 
     ret = cs_press_iic_write(AP_RD_APPLICATION_SATUS_REG, &ic_mode, 1);
     if (ret < 0) {
@@ -763,7 +797,7 @@ static void cs_irq_enable(void)
     } else {
         LOG_ERR("cs_press Eint already enabled!\n");
     }
-    LOG_ERR("Enable irq_flag=%d\n", cs_irq_flag);
+    /*LOG_ERR("Enable irq_flag=%d\n", cs_irq_flag);*/
 }
 
 /**
@@ -779,7 +813,7 @@ static void cs_irq_disable(void)
     } else {
         LOG_ERR("cs_press Eint already disabled!\n");
     }
-    LOG_ERR("Disable irq_flag=%d\n", cs_irq_flag);
+    /*LOG_ERR("Disable irq_flag=%d\n", cs_irq_flag);*/
 }
 
 /**
@@ -789,7 +823,6 @@ static void cs_irq_disable(void)
 */
 static irqreturn_t cs_press_interrupt_handler(int irq, void *dev_id)
 {
-    printk("cs_press entry irq ok.\n");
     cs_press_int_flag = 1;
 
     cs_irq_disable();
@@ -826,11 +859,13 @@ void report_camera_key(void)
     unsigned char rbuf[AP_FORCEDATA_LEN] = {0};
     unsigned char addr = AP_FORCEDATA_REG;
     int16_t distance, curr_pos, curr_force, start_pos, trig, rsts = 0;
+    int16_t ch_rawdata[CH_COUNT] = { 0 };
+    int16_t ch_baseline[CH_COUNT] = { 0 };
     int16_t ch_force[CH_COUNT] = { 0 };
     int32_t heavy_tap_lag[CH_COUNT] = { 0 };
     int i, j, j_max, ret = 0;
     int action = ACTION_UNKNOWN;
-    int level = LEVEL_UNKNOWN;
+    int level = BIT_LEVEL_UNKNOWN;
     bool is_swipe = false;
 
     ret = cs_press_iic_read(addr, rbuf, AP_FORCEDATA_LEN);
@@ -869,20 +904,26 @@ void report_camera_key(void)
     curr_force = (int16_t)(rbuf[8] + (rbuf[9] << 8));
     distance = (int16_t)(rbuf[10] + (rbuf[11] << 8));
     start_pos = (int16_t)(rbuf[12] + (rbuf[13] << 8));
+    ch_rawdata[0] = (int16_t)(rbuf[36] + (rbuf[37] << 8));
+    ch_rawdata[1] = (int16_t)(rbuf[38] + (rbuf[39] << 8));
+    ch_baseline[0] = (int16_t)(rbuf[40] + (rbuf[41] << 8));
+    ch_baseline[1] = (int16_t)(rbuf[42] + (rbuf[43] << 8));
     ch_force[0] = (int16_t)(rbuf[44] + (rbuf[45] << 8));
     ch_force[1] = (int16_t)(rbuf[46] + (rbuf[47] << 8));
     trig = (int16_t)(rbuf[56] + (rbuf[57] << 8));
-    LOG_DEBUG("mode=[%d], ation=[%02x %02x], area=[%02x %02x], level=[%02x %02x] curPos=%d[%02x %02x]"
-            " curForce=%d[%02x %02x] swipeDis=%d[%02x %02x] startPos=%d[%02x %02x] trig=%d[%02x %02x] modeType=[%02x %02x]",
-            g_cs_press.camera_key_mode, rbuf[0], rbuf[1], rbuf[2], rbuf[3], rbuf[4], rbuf[5], curr_pos, rbuf[6], rbuf[7],
-            curr_force, rbuf[8], rbuf[9], distance, rbuf[10], rbuf[11], start_pos, rbuf[12], rbuf[13],
-            trig, rbuf[56], rbuf[57], rbuf[14], rbuf[15]);
+    LOG_DEBUG("mode=[%d], ation=[%02x %02x], area=[%02x %02x], level=[%02x %02x],"
+            " curPos=%d, curForce=%d, swipeDis=%d, startPos=%d, trig=%d, modeType=[%02x %02x],"
+            " chRaw=(%d %d), chBase=(%d %d), chForce=(%d %d)",
+            g_cs_press.camera_key_mode, rbuf[0], rbuf[1], rbuf[2], rbuf[3], rbuf[4], rbuf[5],
+            curr_pos, curr_force, distance, start_pos, trig, rbuf[14], rbuf[15],
+            ch_rawdata[0], ch_rawdata[1], ch_baseline[0], ch_baseline[1], ch_force[0], ch_force[1]);
 
     if (distance < 0) {
         distance = -distance;
     }
     /*if (g_cs_press.mode_switch_waiting_up) {
-        if (g_cs_press.is_long_tap_down && !(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)) {
+        if (g_cs_press.is_long_tap_down && !(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                && !(rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)) {
             input_report_key(cs_input_dev, KEY_LONG_TAP, 0);
             input_sync(cs_input_dev);
             g_cs_press.is_long_tap_down = false;
@@ -901,39 +942,39 @@ void report_camera_key(void)
             action = ACTION_UP;
         }
         if (rbuf[4]) {
-            level = 0;
-            if (rbuf[4] & BIT_LEVEL_LIGHT) {
-                level = level | LEVEL_LIGHT;
-            }
-            if ((rbuf[4] & BIT_LEVEL_HEAVY)
-                    || (rbuf[4] & BIT_LEVEL_HEAVIER)) {
-                level = level | LEVEL_HEAVY;
-            }
+            level = rbuf[4];
         }
 
-        if ((rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) && !g_cs_press.is_physical_tap_down) {
+        if (((rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                || (rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)) && !g_cs_press.is_physical_tap_down) {
             LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP down\n");
             input_report_key(cs_input_dev, KEY_PHYSICAL_TAP, 1);
             input_sync(cs_input_dev);
             g_cs_press.is_physical_tap_down = true;
         }
         if (action != ACTION_UNKNOWN
-                && level != LEVEL_UNKNOWN) {
+                && level != BIT_LEVEL_UNKNOWN) {
             if (action) {
-                if ((level & LEVEL_LIGHT) && !g_cs_press.is_light_tap_down) {
+                if ((level & BIT_LEVEL_TOUCH) && !g_cs_press.is_physical_tap_down) {
+                    LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP down\n");
+                    input_report_key(cs_input_dev, KEY_PHYSICAL_TAP, 1);
+                    input_sync(cs_input_dev);
+                    g_cs_press.is_physical_tap_down = true;
+                }
+                if ((level & BIT_LEVEL_LIGHT) && !g_cs_press.is_light_tap_down) {
                     LOG_INFO("[REPORT_KEY]KEY_LIGHT_TAP down\n");
                     input_report_key(cs_input_dev, KEY_LIGHT_TAP, 1);
                     input_sync(cs_input_dev);
                     g_cs_press.is_light_tap_down = true;
                 }
-                if ((level & LEVEL_HEAVY) && !g_cs_press.is_heavy_tap_down) {
+                if ((level & BIT_LEVEL_HEAVY) && !g_cs_press.is_heavy_tap_down) {
                     LOG_INFO("[REPORT_KEY]KEY_HEAVY_TAP down\n");
                     input_report_key(cs_input_dev, KEY_HEAVY_TAP, 1);
                     input_sync(cs_input_dev);
                     g_cs_press.is_heavy_tap_down = true;
                 }
             } else {
-                if ((level & LEVEL_HEAVY) && g_cs_press.is_heavy_tap_down) {
+                if ((level & BIT_LEVEL_HEAVY) && g_cs_press.is_heavy_tap_down) {
                     LOG_INFO("[REPORT_KEY]KEY_HEAVY_TAP up\n");
                     input_report_key(cs_input_dev, KEY_HEAVY_TAP, 0);
                     input_sync(cs_input_dev);
@@ -959,19 +1000,13 @@ void report_camera_key(void)
                     }
                     LOG_INFO("heavy_tap_lag=[%d, %d]\n", heavy_tap_lag[0], heavy_tap_lag[1]);
                 }
-                if ((level & LEVEL_LIGHT) && g_cs_press.is_light_tap_down) {
+                if ((level & BIT_LEVEL_LIGHT) && g_cs_press.is_light_tap_down) {
                     LOG_INFO("[REPORT_KEY]KEY_LIGHT_TAP up\n");
                     input_report_key(cs_input_dev, KEY_LIGHT_TAP, 0);
                     input_sync(cs_input_dev);
                     g_cs_press.is_light_tap_down = false;
                 }
             }
-        }
-        if (!(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) && g_cs_press.is_physical_tap_down) {
-            LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP up\n");
-            input_report_key(cs_input_dev, KEY_PHYSICAL_TAP, 0);
-            input_sync(cs_input_dev);
-            g_cs_press.is_physical_tap_down = false;
         }
         /* Swipe Event */
         if (rbuf[1] & BIT_ACTION_FOLLOW_SWIPE_UP) {
@@ -996,6 +1031,13 @@ void report_camera_key(void)
             input_report_abs(cs_input_dev, ABS_X, 0);
             input_sync(cs_input_dev);
             is_swipe = true;
+        }
+        if (g_cs_press.is_physical_tap_down && (((action == ACTION_UP) && (level & BIT_LEVEL_TOUCH))
+                    || (!(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) && !(rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)))) {
+            LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP up\n");
+            input_report_key(cs_input_dev, KEY_PHYSICAL_TAP, 0);
+            input_sync(cs_input_dev);
+            g_cs_press.is_physical_tap_down = false;
         }
         if (g_cs_press.is_light_tap_down || g_cs_press.is_heavy_tap_down) {
             if (!g_cs_press.tap_force_min || (curr_force < g_cs_press.tap_force_min)) {
@@ -1023,10 +1065,13 @@ void report_camera_key(void)
         }
     } else {
         //LOG_DEBUG("in DELAY_EVENT_MODE\n");
-        if ((rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) && !g_cs_press.is_physical_tap_down) {
+        if (((rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                || (rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)) && !g_cs_press.is_physical_tap_down) {
             LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP down(ignore)\n");
             g_cs_press.is_physical_tap_down = true;
-        } else if (!(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) && g_cs_press.is_physical_tap_down) {
+        } else if (!(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                && !(rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)
+                && g_cs_press.is_physical_tap_down) {
             LOG_INFO("[REPORT_KEY]KEY_PHYSICAL_TAP up(ignore)\n");
             g_cs_press.is_physical_tap_down = false;
         }
@@ -1044,18 +1089,21 @@ void report_camera_key(void)
             input_sync(cs_input_dev);
             input_report_key(cs_input_dev, KEY_SHORT_TAP, 0);
             input_sync(cs_input_dev);
-        } else if (rbuf[0] & BIT_ACTION_LONG_TAP) {
+        }/* else if (rbuf[0] & BIT_ACTION_LONG_TAP) {
             LOG_INFO("[REPORT_KEY]KEY_LONG_TAP\n");
             input_report_key(cs_input_dev, KEY_LONG_TAP, 1);
             input_sync(cs_input_dev);
-            /*if (rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN) {
+            if ((rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                        || (rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)) {
                 g_cs_press.is_long_tap_down = true;
-            } else {*/
+            } else {
             input_report_key(cs_input_dev, KEY_LONG_TAP, 0);
             input_sync(cs_input_dev);
-            /*}*/
-        }
-        /*if (g_cs_press.is_long_tap_down && !(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)) {
+            }
+        }*/
+        /*if (g_cs_press.is_long_tap_down
+                && !(rbuf[1] & BIT_ACTION_LIFT_PHYSICAL_DOWN)
+                && !(rbuf[0] & BIT_ACTION_PHYSICAL_TOUCHING)) {
             input_report_key(cs_input_dev, KEY_LONG_TAP, 0);
             input_sync(cs_input_dev);
             g_cs_press.is_long_tap_down = false;
@@ -1147,10 +1195,8 @@ static int cs_press_event_handler(void *unused)
     sched_setscheduler(current, SCHED_FIFO, &param);
 
     do {
-        LOG_ERR("cs_press_event_handler do wait\n");
         wait_event_interruptible(cs_press_waiter,
             cs_press_int_flag != 0);
-        LOG_ERR("cs_press_event_handler enter wait\n");
         mutex_lock(&press_lock);
         cs_press_int_flag = 0;
 
@@ -1522,9 +1568,9 @@ int camera_key_config_read(trigger_strength_config *strength_cfg)
 }
 #endif
 
-int cs_press_get_offset(int32_t *offset)
+int cs_press_get_offset(int32_t *offset, int32_t *offset_diff)
 {
-    unsigned char rbuf[CH_COUNT * 2] = {0};
+    unsigned char rbuf[CH_COUNT * 2 * 2] = {0};
     int16_t dac_conver = 0;
     int i, ret = 0;
 
@@ -1535,8 +1581,8 @@ int cs_press_get_offset(int32_t *offset)
     }
     dac_conver = (int16_t)(rbuf[0] + (rbuf[1] << 8));
 
-    memset(rbuf, 0, CH_COUNT * 2);
-    ret = cs_press_iic_read(AP_OFFSET_REG, rbuf, CH_COUNT * 2);
+    memset(rbuf, 0, CH_COUNT * 2 * 2);
+    ret = cs_press_iic_read(AP_OFFSET_REG, rbuf, CH_COUNT * 2 * 2);
     if (ret < 0) {
         LOG_ERR("read reg=0x%02x error, ret = %d\n", AP_OFFSET_REG, ret);
         return -1;
@@ -1545,6 +1591,15 @@ int cs_press_get_offset(int32_t *offset)
         offset[i] = (int16_t)(rbuf[2 * i] + (rbuf[2 * i + 1] << 8)) * dac_conver;
         LOG_INFO("offset[%i] = %d (%d[%02x %02x] * %d)\n", i, offset[i],
                 (int16_t)(rbuf[2 * i] + (rbuf[2 * i + 1] << 8)), rbuf[2 * i], rbuf[2 * i + 1], dac_conver);
+    }
+
+    if (offset_diff) {
+        for (i = 0; i < CH_COUNT; i++) {
+            offset_diff[i] = offset[i] - (int16_t)(rbuf[2 * CH_COUNT + 2 * i] + (rbuf[2 * CH_COUNT + 2 * i + 1] << 8)) * dac_conver;
+            LOG_INFO("offset_diff[%i] = %d (%d - %d[%02x %02x] * %d)\n", i, offset_diff[i], offset[i],
+                    (int16_t)(rbuf[2 * CH_COUNT + 2 * i] + (rbuf[2 * CH_COUNT + 2 * i + 1] << 8)),
+                    rbuf[2 * CH_COUNT + 2 * i], rbuf[2 * CH_COUNT + 2 * i + 1], dac_conver);
+        }
     }
 
     return ret;
@@ -1742,7 +1797,7 @@ char cs_press_fw_force_update(const unsigned char *fw_array)
     /* reset */
     cs_press_reset_ic();
     /* check fw version */
-    cs_press_delay_ms(300); /* skip boot */
+    cs_press_delay_ms(900); /* skip boot */
     ret = cs_press_iic_read(AP_VERSION_REG, fw_read_code, CS_FW_VERSION_LENGTH);
     fw_read_version = 0;
 
@@ -1790,7 +1845,7 @@ char cs_press_fw_high_version_update(const unsigned char *fw_array)
         /* get ic ap version */
         read_version = ((((unsigned short)read_temp[2]<<8)&0xff00)|read_temp[3]);
         /* compare */
-        if(read_version < default_version)
+        if(read_version != default_version)
         {
             flag_update = 1;
         }
@@ -1875,22 +1930,26 @@ int fml_firmware_send_data(unsigned char *data, int len)
         LOG_INFO("%s\n", payload);
         oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_FW_UPDATE_TYPE, payload);
 #endif
+        g_cs_press.fw_update_error = result;
+        g_cs_press.is_update_log = 1;
+    } else {
+        g_cs_press.is_update_log = 0;
     }
 exit_fw_buf:
     msleep(100);
-    cs_press_get_noise_var(g_cs_press.dac_noise_var);
-    cs_press_get_offset(g_cs_press.dac_offset);
+    cs_press_get_noise_var(g_cs_press.dac_noise_var_boot);
+    cs_press_get_offset(g_cs_press.dac_offset_boot, NULL);
 #if defined(CONFIG_OPLUS_FEATURE_FEEDBACK) || defined(CONFIG_OPLUS_FEATURE_FEEDBACK_MODULE)
     memset(payload, 0, 1024);
     scnprintf(payload, sizeof(payload),
                "NULL$$EventField@@Offset$$FieldData@@Offset$$detailData@@offset[0]=%d,offset[1]=%d",
-               g_cs_press.dac_offset[0], g_cs_press.dac_offset[1]);
+               g_cs_press.dac_offset_boot[0], g_cs_press.dac_offset_boot[1]);
     LOG_INFO("%s\n", payload);
     oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_OFFSET_TYPE, payload);
     memset(payload, 0, 1024);
     scnprintf(payload, sizeof(payload),
                "NULL$$EventField@@Noise$$FieldData@@NoiseVar$$detailData@@noiseVar[0]=%d,noiseVar[1]=%d",
-               g_cs_press.dac_noise_var[0], g_cs_press.dac_noise_var[1]);
+               g_cs_press.dac_noise_var_boot[0], g_cs_press.dac_noise_var_boot[1]);
     LOG_INFO("%s\n", payload);
     oplus_kevent_fb(PSW_BSP_KEYPAD, CS_PRESS_FB_NOISE_VAR_TYPE, payload);
 #endif
@@ -1922,12 +1981,13 @@ err_release_cfg:
     cs_press_delay_ms(10);
     //ftm_boot_mode_check();
 #ifdef CAMERA_KEY
-    camera_key_config_read(&g_cs_press.strength_cfg);
+    /*camera_key_config_read(&g_cs_press.strength_cfg);*/
     camera_key_para_init();
     cs_press_set_mode(g_cs_press.camera_key_mode);
-    cs_press_set_trigger_strength(g_cs_press.delay_cfg[g_cs_press.cfg_chosen]);
+    cs_press_set_trigger_strength(g_cs_press.strength_cfg);
 #endif
     mutex_unlock(&press_lock);
+    g_cs_press.update_done = 1;
     LOG_INFO("end\n");
 }
 
@@ -3056,6 +3116,7 @@ int cs_press_init(void)
     int ret = 0;
     char i;
     unsigned char boot_ver_buf[4];
+
     LOG_DEBUG("cs driver ver %s\n", cs_driver_ver);
     for(i = 0; i < 3; i++){
         if(cs_read_boot_version(boot_ver_buf) >= 0){
@@ -3072,6 +3133,7 @@ int cs_press_init(void)
     if(i >= 3)
     {
         LOG_ERR("chipid err return\n");
+        g_cs_press.is_update_log = 1;
         return -1;
     }
     /* reset ic */
@@ -4840,13 +4902,14 @@ static ssize_t cs_proc_camera_key_config_write(struct file *file, const char __u
         LOG_ERR("argument err\n");
         goto exit_flag;
     }
-    kbuf = kzalloc(count, GFP_KERNEL );
+    kbuf = kzalloc(count + 1, GFP_KERNEL );
     if (!kbuf) {
         goto exit_flag;
     }
     if (copy_from_user(kbuf, buf, count)) {
         goto exit_kfree;
     }
+    kbuf[count] = '\0';
 
     mutex_lock(&press_lock);
     ret = sscanf(kbuf, "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
@@ -4942,6 +5005,53 @@ static ssize_t cs_proc_camera_key_report_write(struct file *file, const char __u
     }
     mutex_unlock(&press_lock);
 
+exit_kfree:
+    kfree(kbuf);
+exit_flag:
+    return count;
+}
+
+static ssize_t cs_proc_quick_on_close_write(struct file *file, const char __user *buf,
+                                            size_t count, loff_t *offset)
+{
+    int tempdata = 0;
+    char *kbuf = NULL;
+
+    if (!buf) {
+        LOG_ERR("buff is null!\n");
+        goto exit_flag;
+    }
+    if((count <= 0)||(count > 4)){
+        LOG_ERR("argument err\n");
+        goto exit_flag;
+    }
+    kbuf = kzalloc(count + 1, GFP_KERNEL);
+    if (!kbuf) {
+        goto exit_kfree;
+    }
+
+    if (copy_from_user(kbuf, buf, count)) {
+        goto exit_kfree;
+    }
+
+    kbuf[count] = '\0';
+    LOG_INFO("%s: kbuf=%s, count=%zu\n", __func__, kbuf, count);
+    if (!sscanf(kbuf, "%d", &tempdata)) {
+        LOG_ERR("%s: sscanf error.\n", __func__);
+        goto exit_kfree;
+    }
+
+    mutex_lock(&press_lock);
+
+    LOG_INFO("%s: %d --> %d\n", __func__, g_cs_press.quick_on_closed, tempdata);
+    g_cs_press.quick_on_closed = !!tempdata;
+    if (g_cs_press.is_suspended) {
+        cs_press_set_mode(CAMERA_KEY_SLEEP_MODE);
+    } else {
+        cs_press_set_mode(g_cs_press.camera_key_mode);
+    }
+
+    mutex_unlock(&press_lock);
 exit_kfree:
     kfree(kbuf);
 exit_flag:
@@ -5053,6 +5163,8 @@ static ssize_t cs_proc_health_monitor_write(struct file *file, const char __user
         g_cs_press.swipe_force_min = 0;
         g_cs_press.swipe_force_max = 0;
         g_cs_press.double_tap_cnt = 0;
+        g_cs_press.bus_error_cnt = 0;
+        g_cs_press.fw_update_error = 0;
         for (i = 0; i < CH_COUNT; i++) {
             for (j = 0; j < LAG_MIN_COUNT; j++) {
                 g_cs_press.heavy_tap_lag[i][j] = 0;
@@ -5062,6 +5174,34 @@ static ssize_t cs_proc_health_monitor_write(struct file *file, const char __user
 exit_kfree:
     kfree(kbuf);
 exit_flag:
+    return count;
+}
+
+static ssize_t cs_proc_probe_status_write(struct file *file, const char __user *buf,
+		size_t count, loff_t *offset)
+{
+    char kbuf[5] = { 0 };
+    int tmp = 0;
+
+    if (!buf) {
+        LOG_ERR("buff is null!\n");
+        return count;
+    }
+    if((count <= 0)||(count > 4)){
+        LOG_ERR("argument err\n");
+        return count;
+    }
+
+    if (copy_from_user(kbuf, buf, count)) {
+        return count;
+    }
+    if (kstrtoint(kbuf, 10, &tmp)) {
+        LOG_ERR("%s: kstrtoint error\n", __func__);
+        return count;
+    }
+    g_cs_press.is_update_log = !! tmp;
+    LOG_ERR("is_update_log is %d\n", g_cs_press.is_update_log);
+
     return count;
 }
 
@@ -5274,35 +5414,43 @@ static int cs_proc_charge_state_show(struct seq_file *m, void *v)
 static int cs_proc_camera_key_mode_show(struct seq_file *m, void *v)
 {
     char ret = 0;
-    seq_printf(m, "%d\n", g_cs_press.camera_key_mode);
+    seq_printf(m, "%d", g_cs_press.camera_key_mode);
     return ret;
 }
 
 static int cs_proc_camera_key_config_show(struct seq_file *m, void *v)
 {
     char ret = 0;
+    trigger_strength_config strength_cfg;
 
 #ifdef CAMERA_KEY
-    camera_key_config_read(&g_cs_press.strength_cfg);
+    camera_key_config_read(&strength_cfg);
     seq_printf(m, "tap_strength[%u,%u,%u,%u], swipe_strength[%u,%u,%u,%u], area[%u,%u], judge_time[%u,%u]\n",
-        g_cs_press.strength_cfg.light_tap_down_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.light_tap_up_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.heavy_tap_down_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.heavy_tap_up_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.light_swipe_down_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.light_swipe_up_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.heavy_swipe_down_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.heavy_swipe_up_strength * STRENGTH_PER_LEVEL,
-        g_cs_press.strength_cfg.area_1, g_cs_press.strength_cfg.area_2,
-        g_cs_press.strength_cfg.long_tap_judge_time * TIME_MS_PER_LEVEL,
-        g_cs_press.strength_cfg.muti_tap_judge_time * TIME_MS_PER_LEVEL);
+        strength_cfg.light_tap_down_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.light_tap_up_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.heavy_tap_down_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.heavy_tap_up_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.light_swipe_down_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.light_swipe_up_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.heavy_swipe_down_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.heavy_swipe_up_strength * STRENGTH_PER_LEVEL,
+        strength_cfg.area_1, strength_cfg.area_2,
+        strength_cfg.long_tap_judge_time * TIME_MS_PER_LEVEL,
+        strength_cfg.muti_tap_judge_time * TIME_MS_PER_LEVEL);
 #endif
+    return ret;
+}
+
+static int cs_proc_quick_on_close_show(struct seq_file *m, void *v)
+{
+    char ret = 0;
+    seq_printf(m, "%d", g_cs_press.quick_on_closed);
     return ret;
 }
 
 static int cs_proc_health_monitor_show(struct seq_file *m, void *v)
 {
-    int i, ret = 0;
+    int i, cnt, ret = 0;
     unsigned char read_temp[FW_ONE_BLOCK_LENGTH_R] = {0};
 
     seq_printf(m,"ic:CSA37F71\n");
@@ -5314,13 +5462,17 @@ static int cs_proc_health_monitor_show(struct seq_file *m, void *v)
     } else {
         seq_printf(m,"fw_ver:read error\n");
     }
-    ret = cs_press_get_offset(g_cs_press.dac_offset);
+    ret = cs_press_get_offset(g_cs_press.dac_offset, g_cs_press.dac_offset_diff);
     if (ret == 0) {
         seq_printf(m, "ch1_offset:%d\n", g_cs_press.dac_offset[0]);
         seq_printf(m, "ch2_offset:%d\n", g_cs_press.dac_offset[1]);
+        seq_printf(m, "ch1_offset_diff:%d\n", g_cs_press.dac_offset_diff[0]);
+        seq_printf(m, "ch2_offset_diff:%d\n", g_cs_press.dac_offset_diff[1]);
     } else {
         seq_printf(m, "ch1_offset:read error\n");
         seq_printf(m, "ch2_offset:read error\n");
+        seq_printf(m, "ch1_offset_diff:read error\n");
+        seq_printf(m, "ch2_offset_diff:read error\n");
     }
     ret = cs_press_get_noise_var(g_cs_press.dac_noise_var);
     if (ret == 0) {
@@ -5330,6 +5482,10 @@ static int cs_proc_health_monitor_show(struct seq_file *m, void *v)
         seq_printf(m, "ch1_noise_var:read error\n");
         seq_printf(m, "ch2_noise_var:read error\n");
     }
+    seq_printf(m, "ch1_offset_boot:%d\n", g_cs_press.dac_offset_boot[0]);
+    seq_printf(m, "ch2_offset_boot:%d\n", g_cs_press.dac_offset_boot[1]);
+    seq_printf(m, "ch1_noise_var_boot:%d\n", g_cs_press.dac_noise_var_boot[0]);
+    seq_printf(m, "ch2_noise_var_boot:%d\n", g_cs_press.dac_noise_var_boot[1]);
     seq_printf(m, "tap_force_min:%d\n", g_cs_press.tap_force_min);
     seq_printf(m, "tap_force_max:%d\n", g_cs_press.tap_force_max);
     seq_printf(m, "swipe_force_min:%d\n", g_cs_press.swipe_force_min);
@@ -5346,8 +5502,24 @@ static int cs_proc_health_monitor_show(struct seq_file *m, void *v)
         seq_printf(m, "soft_reset_cnt:%d\n", g_cs_press.soft_reset_cnt);
     if (g_cs_press.wdt_reset_cnt)
         seq_printf(m, "wdt_reset_cnt:%d\n", g_cs_press.wdt_reset_cnt);
+    if (g_cs_press.fw_update_error)
+        seq_printf(m, "fw_update_error:0x%x\n", g_cs_press.fw_update_error);
+    if (g_cs_press.bus_error_cnt) {
+        seq_printf(m, "bus_error_cnt:%d\n", g_cs_press.bus_error_cnt);
+        cnt = (g_cs_press.bus_error_cnt > BUS_ERROR_MSG_CNT) ? BUS_ERROR_MSG_CNT : g_cs_press.bus_error_cnt;
+        for (i = 0; i < cnt; i++) {
+            seq_printf(m, "bus_error_msg[%d]:%s\n", i, g_cs_press.bus_error_msg[i]);
+        }
+    }
 
     return 0;
+}
+
+static int cs_proc_probe_status_show(struct seq_file *m, void *v)
+{
+    char ret = 0;
+    seq_printf(m, "%d", g_cs_press.is_update_log);
+    return ret;
 }
 
 static int cs_proc_read_boot_version_open(struct inode *inode, struct file *filp)
@@ -5415,9 +5587,19 @@ static int cs_proc_camera_key_config_open(struct inode *inode, struct file *filp
     return single_open(filp, cs_proc_camera_key_config_show, pde_data(inode));
 }
 
+static int cs_proc_quick_on_close_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, cs_proc_quick_on_close_show, pde_data(inode));
+}
+
 static int cs_proc_health_monitor_open(struct inode *inode, struct file *filp)
 {
     return single_open(filp, cs_proc_health_monitor_show, pde_data(inode));
+}
+
+static int cs_proc_probe_status_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, cs_proc_probe_status_show, pde_data(inode));
 }
 
 static int cs_proc_show(struct seq_file *m,void *v)
@@ -5573,9 +5755,11 @@ static const char proc_list[PROC_FOPS_NUM][PROC_NAME_LEN]={
     "camera_key_mode",
     "camera_key_config",
     "camera_key_report",
+    "quick_on_close",
     "gpio_control",
     "local_fw_info",
     "health_info",
+    "probe_status",
 };
 
 #ifndef ALIENTEK
@@ -5609,9 +5793,11 @@ static const struct file_operations proc_fops[PROC_FOPS_NUM] = {
     FOPS_ARRAY(cs_proc_camera_key_mode_open, cs_proc_camera_key_mode_write),
     FOPS_ARRAY(cs_proc_camera_key_config_open, cs_proc_camera_key_config_write),
     FOPS_ARRAY(cs_proc_open, cs_proc_camera_key_report_write),
+    FOPS_ARRAY(cs_proc_quick_on_close_open, cs_proc_quick_on_close_write),
     FOPS_ARRAY(cs_proc_open, cs_proc_gpio_control_write),
     FOPS_ARRAY(cs_proc_local_fw_info_open, NULL),    /*local_fw_info*/
     FOPS_ARRAY(cs_proc_health_monitor_open, cs_proc_health_monitor_write),
+    FOPS_ARRAY(cs_proc_probe_status_open, cs_proc_probe_status_write),
 };
 /**
   * @brief  cs_sys_create
@@ -5670,17 +5856,27 @@ static void cs_press_panel_notifier_callback(enum panel_event_notifier_tag tag,
         LOG_INFO("Notification type:%d, early_trigger:%d",
             notification->notif_type,
             notification->notif_data.early_trigger);
+    } else {
+        return;
     }
 
-    mutex_lock(&press_lock);
-    if (notification->notif_type == DRM_PANEL_EVENT_UNBLANK && g_cs_press.is_suspended) {
-        cs_press_set_mode(g_cs_press.camera_key_mode);
-        g_cs_press.is_suspended = false;
-    } else if (notification->notif_type == DRM_PANEL_EVENT_BLANK && !g_cs_press.is_suspended) {
-        cs_press_set_mode(CAMERA_KEY_SLEEP_MODE);
-        g_cs_press.is_suspended = true;
+    if (g_cs_press.update_done) {
+        if (notification->notif_type == DRM_PANEL_EVENT_UNBLANK && g_cs_press.is_suspended) {
+            mutex_lock(&press_lock);
+            cs_press_set_mode(g_cs_press.camera_key_mode);
+            g_cs_press.is_suspended = false;
+            mutex_unlock(&press_lock);
+        } else if ((notification->notif_type == DRM_PANEL_EVENT_BLANK
+                || notification->notif_type == DRM_PANEL_EVENT_BLANK_LP) && !g_cs_press.is_suspended) {
+            mutex_lock(&press_lock);
+            cs_press_set_mode(CAMERA_KEY_SLEEP_MODE);
+            g_cs_press.is_suspended = true;
+            mutex_unlock(&press_lock);
+        }
+        LOG_INFO("panel notification callback finish.\n");
+    } else {
+        LOG_INFO("device not ready.\n");
     }
-    mutex_unlock(&press_lock);
 }
 
 #elif IS_ENABLED(CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY) || IS_ENABLED(CONFIG_OPLUS_DEVICE_INFO_MTK_PLATFORM)
@@ -5692,15 +5888,18 @@ static int cs_press_mtk_drm_notifier_callback(struct notifier_block *nb,
     LOG_INFO("mtk gki notifier event:%lu, blank:%d",
             event, *blank);
 
-    mutex_lock(&press_lock);
     if (*blank == MTK_DISP_BLANK_UNBLANK && g_cs_press.is_suspended) {
+        mutex_lock(&press_lock);
         cs_press_set_mode(g_cs_press.camera_key_mode);
         g_cs_press.is_suspended = false;
+        mutex_unlock(&press_lock);
     } else if (*blank == MTK_DISP_BLANK_POWERDOWN && !g_cs_press.is_suspended) {
+        mutex_lock(&press_lock);
         cs_press_set_mode(CAMERA_KEY_SLEEP_MODE);
         g_cs_press.is_suspended = true;
+        mutex_unlock(&press_lock);
     }
-    mutex_unlock(&press_lock);
+    LOG_INFO("mtk gki notifier callback finish.\n");
 
     return 0;
 }
@@ -5726,23 +5925,25 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
     if (evdata && evdata->data) {
         blank = evdata->data;
         LOG_INFO("%s: event = %ld, blank = %d\n", __func__, event, *blank);
-        mutex_lock(&press_lock);
 #if IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY)
         if (*blank == MSM_DRM_BLANK_UNBLANK && g_cs_press.is_suspended) { /*resume*/
 #else
         if (*blank == FB_BLANK_UNBLANK && g_cs_press.is_suspended) {  /*resume*/
 #endif
+            mutex_lock(&press_lock);
             cs_press_set_mode(g_cs_press.camera_key_mode);
             g_cs_press.is_suspended = false;
+            mutex_unlock(&press_lock);
 #if IS_ENABLED(CONFIG_DRM_MSM) || IS_ENABLED(CONFIG_DRM_OPLUS_NOTIFY)
         } else if (*blank == MSM_DRM_BLANK_BLANK && !g_cs_press.is_suspended) { /*suspend*/
 #else
         } else if (*blank == FB_BLANK_BLANK && !g_cs_press.is_suspended) {  /*suspend*/
 #endif
+            mutex_lock(&press_lock);
             cs_press_set_mode(CAMERA_KEY_SLEEP_MODE);
             g_cs_press.is_suspended = true;
+            mutex_unlock(&press_lock);
         }
-        mutex_unlock(&press_lock);
     }
 
     return 0;
@@ -5809,7 +6010,7 @@ int cs_press_register_notifier(void)
     if (g_cs_press.active_panel) {
         cookie = panel_event_notifier_register(PANEL_EVENT_NOTIFICATION_PRIMARY,
                 PANEL_EVENT_NOTIFIER_CLIENT_TRI_STATE_KEY, g_cs_press.active_panel,
-                &cs_press_panel_notifier_callback, (void *)&g_cs_press);
+                &cs_press_panel_notifier_callback, &g_cs_press);
 
         if (!cookie) {
             LOG_ERR("Unable to register fb_notifier: %d\n", ret);
@@ -5994,8 +6195,8 @@ static struct miscdevice csa37f71_misc = {
 
 static int csa37f71_probe(struct i2c_client *client)
 {
-     int ret = -1;
-     int retry = 0;
+    int ret = -1;
+    int retry = 0;
 
     LOG_DEBUG("probe init\n");
     ret = misc_register(&csa37f71_misc); /*dev node*/
@@ -6023,11 +6224,28 @@ static int csa37f71_probe(struct i2c_client *client)
         return -EPROBE_DEFER; /* retry */
     }
 #endif
+    g_cs_press.pinctrl = devm_pinctrl_get(&client->dev);
+    if (IS_ERR_OR_NULL(g_cs_press.pinctrl)) {
+        LOG_ERR("get pinctrl fail\n");
+        return -EINVAL;
+    }
+
+    g_cs_press.irq_pin_input = pinctrl_lookup_state(g_cs_press.pinctrl, "default");
+    if (IS_ERR_OR_NULL(g_cs_press.irq_pin_input)) {
+        LOG_ERR("Failed to get the state irq_pin_input pinctrl handle\n");
+        return -EINVAL;
+    } else {
+        pinctrl_select_state(g_cs_press.pinctrl, g_cs_press.irq_pin_input);
+    }
+
+    g_cs_press.is_update_log = 0;
     cs_procfs_create();                 /*proc node*/
 #ifdef INT_SET_EN
     eint_init();
 #endif
     g_cs_press.camera_key_mode = CAMERA_KEY_DEFAULT_MODE;
+    camera_key_config_read(&g_cs_press.strength_cfg);
+
     g_cs_press.suspend_lock = wakeup_source_register(NULL, "cs_press_wakelock");
     if (!g_cs_press.suspend_lock) {
         pr_err("wakeup source init failed.\n");

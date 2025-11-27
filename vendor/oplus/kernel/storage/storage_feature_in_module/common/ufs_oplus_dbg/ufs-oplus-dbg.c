@@ -761,10 +761,10 @@ int ufs_ioctl_monitor(struct scsi_device *dev, void __user *buf_user)
 		goto error_free_buffer;
 	}
 	req = blk_mq_rq_to_pdu(rq);
-
 	cmdlen = COMMAND_SIZE(opcode);
 	if (((VENDOR_SPECIFIC_CDB == opcode) && (0 == strncmp(dev->vendor, "SAMSUNG ", 8)))
-	         || ((READ_BUFFER == opcode) && (0 == strncmp(dev->vendor, "XBSTOR ", 7)))) {
+	         || ((READ_BUFFER == opcode) && (0 == strncmp(dev->vendor, "XBSTOR ", 7)))
+	         || ((READ_BUFFER == opcode) && (0 == strncmp(dev->vendor, "YMTC ", 5)) && (strstr(dev->model, "B4TF")))) {
 		cmdlen = 16;
 	}
 
@@ -910,6 +910,9 @@ ufs_oplus_query_ioctl(struct ufs_hba *hba, u8 lun, void __user *buffer)
 				goto out_release_mem;
 			}
 			index = lun;
+			break;
+		case QUERY_DESC_IDN_STRING:
+			index = ioctl_data->index;
 			break;
 		default:
 			goto out_einval;

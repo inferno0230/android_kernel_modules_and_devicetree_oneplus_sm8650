@@ -259,10 +259,10 @@ void memcg_app_score_update(struct mem_cgroup *target)
 static void mem_cgroup_css_online_hook(void *data,
 		struct cgroup_subsys_state *css, struct mem_cgroup *memcg)
 {
-	if (memcg->android_oem_data1[0])
+	if (memcg->android_oem_data1[0]) {
 		memcg_app_score_update(memcg);
-
-	css_get(css);
+		css_get(css);
+	}
 }
 
 static void mem_cgroup_css_offline_hook(void *data,
@@ -274,12 +274,10 @@ static void mem_cgroup_css_offline_hook(void *data,
 		spin_lock_irqsave(&score_list_lock, flags);
 		list_del_init(&MEMCGRP_ITEM(memcg, score_node));
 		spin_unlock_irqrestore(&score_list_lock, flags);
+		css_put(css);
 	}
-
-	css_put(css);
 }
 
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
 extern bool test_task_ux(struct task_struct *task);
 #else
@@ -330,36 +328,6 @@ static void oplus_mm_common_hook(void *unused, unsigned long *behavior, unsigned
 		break;
 	}
 }
-#endif /* CONFIG_CONT_PTE_HUGEPAGE */
-
-#define HS_AID_APP_START 10000 /* first app user */
-#define HS_AID_APP_END 19999   /* last app user */
-#define HS_AID_USER_OFFSET 100000 /* offset for uid ranges for each user */
-
-static inline bool is_fg_memcg(struct mem_cgroup *memcg)
-{
-	int uid, app_id;
-
-	if (unlikely(!memcg || !MEMCGRP_ITEM_DATA(memcg)))
-		return false;
-
-	uid = (int)atomic64_read(&MEMCGRP_ITEM(memcg, app_uid));
-	app_id = uid % HS_AID_USER_OFFSET;
-
-	if (unlikely(app_id < HS_AID_APP_START || app_id > HS_AID_APP_END))
-		return false;
-
-	if (unlikely(!atomic64_read(&MEMCGRP_ITEM(memcg, app_score)))) {
-		log_info("fg memcg skipped, uid: %d\n", uid);
-		return true;
-	}
-	return false;
-}
-
-static void shrink_node_memcgs_hook(void *data, struct mem_cgroup *memcg, bool *skip)
-{
-	*skip = (current->flags & PF_IN_FORCE_SHRINK_CONTEXT) && is_fg_memcg(memcg);
-}
 
 #define REGISTER_HOOK(name) do {\
 	rc = register_trace_android_vh_##name(name##_hook, NULL);\
@@ -387,13 +355,11 @@ static int register_all_hooks(void)
 	REGISTER_HOOK(mem_cgroup_css_online);
 	/* mem_cgroup_css_offline_hook */
 	REGISTER_HOOK(mem_cgroup_css_offline);
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
 	rc = register_trace_android_vh_si_meminfo_adjust(oplus_mm_common_hook, NULL);
 	if (rc) {
 		log_err("register_trace_android_vh_si_meminfo_adjust failed\n");
 		goto err_out_si_meminfo_adjust;
 	}
-#endif
 #ifdef CONFIG_HYBRIDSWAP_SWAPD
 	/* For GKI reason we use alloc_pages_slowpath_hook rather than rmqueue_hook. Both are fine. */
 	/* rmqueue_hook */
@@ -413,10 +379,8 @@ static int register_all_hooks(void)
 	REGISTER_HOOK(mem_cgroup_id_remove);
 #endif
 
-	REGISTER_HOOK(shrink_node_memcgs);
 	return 0;
 
-ERROR_OUT(shrink_node_memcgs):
 #ifdef CONFIG_HYBRIDSWAP_CORE
 	UNREGISTER_HOOK(mem_cgroup_id_remove);
 ERROR_OUT(mem_cgroup_id_remove):
@@ -429,10 +393,8 @@ ERROR_OUT(rmqueue): */
 	unregister_trace_android_vh_alloc_pages_slowpath(hybridswapd_ops->vh_alloc_pages_slowpath, NULL);
 ERROR_OUT(alloc_pages_slowpath):
 #endif
-#ifdef CONFIG_CONT_PTE_HUGEPAGE
 	unregister_trace_android_vh_si_meminfo_adjust(oplus_mm_common_hook, NULL);
 err_out_si_meminfo_adjust:
-#endif
 	UNREGISTER_HOOK(mem_cgroup_css_offline);
 ERROR_OUT(mem_cgroup_css_offline):
 	UNREGISTER_HOOK(mem_cgroup_css_online);
@@ -458,7 +420,6 @@ static void unregister_all_hook(void)
 	UNREGISTER_HOOK(tune_scan_type);
 	unregister_trace_android_vh_alloc_pages_slowpath(hybridswapd_ops->vh_alloc_pages_slowpath, NULL);
 #endif
-	UNREGISTER_HOOK(shrink_node_memcgs);
 }
 
 /*
@@ -545,6 +506,10 @@ static unsigned long memcg_lru_pages(struct mem_cgroup *memcg,
 #ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
 	if (chp) {
 		struct chp_lruvec *lruvec;
+
+		if (!chp_supported)
+			return 0;
+
 		lruvec = (struct chp_lruvec *)memcg->deferred_split_queue.split_queue_len;
 		for (zid = 0; zid < MAX_NR_ZONES; zid++)
 			nr += READ_ONCE(lruvec->lru_zone_size[zid][lru]);
@@ -634,6 +599,123 @@ static unsigned long get_reclaim_pages(struct mem_cgroup *memcg, bool file,
 		 chp ? "chp" : "normal page",
 		 *batch, nr_need_reclaim, file);
 	return nr_need_reclaim;
+}
+
+static unsigned long get_total_memcg_anon_pages(struct mem_cgroup *memcg,
+	unsigned long *base_anon, unsigned long *chp_anon,
+	unsigned long *zram_anon, unsigned long *chp_zram_anon,
+	unsigned long *nand_anon)
+{
+	unsigned long total;
+
+	unsigned long base =
+		memcg_lru_pages(memcg, LRU_ACTIVE_ANON, false) +
+		memcg_lru_pages(memcg, LRU_INACTIVE_ANON, false);
+
+	unsigned long chp =
+		memcg_lru_pages(memcg, LRU_ACTIVE_ANON, true) +
+		memcg_lru_pages(memcg, LRU_INACTIVE_ANON, true);
+
+	unsigned long zram =
+		hybridswap_read_memcg_stats(memcg, MCG_ZRAM_STORED_PG_SZ);
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	unsigned long chp_zram =
+		hybridswap_read_memcg_stats(memcg, MCG_ZRAM_CHP_STORED_PG_SZ);
+#else
+	unsigned long chp_zram = 0UL;
+#endif
+
+	unsigned long nand =
+		hybridswap_read_memcg_stats(memcg, MCG_DISK_STORED_PG_SZ);
+
+	if (chp_supported && !nandswapV2_supported())
+		/* MEMCG_SWAP == zram + chp_zram + nand; nand == 0 here */
+		zram = memcg_page_state_local(memcg, MEMCG_SWAP);
+
+	total = base + chp + zram + chp_zram + nand;
+
+	base_anon ? (*base_anon = base) : 0;
+	chp_anon ? (*chp_anon = chp) : 0;
+	zram_anon ? (*zram_anon = zram) : 0;
+	chp_zram_anon ? (*chp_zram_anon = chp_zram) : 0;
+	nand_anon ? (*nand_anon = nand) : 0;
+
+	log_info("total: %lu, base_anon: %lu, chp_anon: %lu, zram: %lu, chp_zram: %lu, nand: %lu",
+		total, base, chp, zram, chp_zram, nand);
+
+	return total;
+}
+
+static ssize_t mem_cgroup_force_shrink_anon_percent(struct kernfs_open_file *of,
+		char *buf, size_t nbytes, loff_t off)
+{
+	int ret;
+	struct mem_cgroup *memcg;
+	long nr_need_reclaim;
+	unsigned long total_pages, nr_reclaimed = 0;
+	unsigned long batch = BATCH_4M;
+	unsigned int percent = 0;
+	unsigned long chp_anon, zram, chp_zram, nand;
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	unsigned long chp_nr_to_reclaim = 0;
+#endif
+
+	if (!buf)
+		return nbytes;
+
+	ret = sscanf(strstrip(buf), "%u", &percent);
+
+	if (percent <= 0)
+		return nbytes;
+
+	if (percent > 100)
+		percent = 100;
+
+	memcg = mem_cgroup_from_css(of_css(of));
+	total_pages = get_total_memcg_anon_pages(memcg,
+		NULL, &chp_anon, &zram, &chp_zram, &nand);
+
+	nr_need_reclaim = total_pages * percent / 100 - zram - chp_zram - nand;
+
+	log_info("%u%% are %lu pages, nr_need_reclaim: %ld",
+		percent, total_pages * percent / 100, nr_need_reclaim);
+
+	if (nr_need_reclaim <= 0)
+		return nbytes;
+
+	current->flags |= PF_SHRINK_ANON;
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	if (chp_supported && chp_pool) {
+		if (nr_need_reclaim > chp_anon) {
+			chp_nr_to_reclaim = chp_anon;
+			nr_need_reclaim -= chp_anon;
+		} else {
+			chp_nr_to_reclaim = nr_need_reclaim;
+			nr_need_reclaim = 0;
+		}
+		log_info("nr_anon_chp: %lu, chp_to_reclaim: %lu",
+			chp_anon, chp_nr_to_reclaim);
+
+		ret = force_shrink_batch(memcg, chp_nr_to_reclaim,
+				&nr_reclaimed, batch, true, true);
+		if (ret == -EINTR)
+			goto out;
+
+		nr_reclaimed = 0;
+	}
+#endif
+
+	if (nr_need_reclaim > 0) {
+		ret = force_shrink_batch(memcg, nr_need_reclaim, &nr_reclaimed,
+						batch, false, false);
+	}
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+out:
+#endif
+	current->flags &= ~PF_SHRINK_ANON;
+	return nbytes;
 }
 
 static ssize_t mem_cgroup_force_shrink(struct kernfs_open_file *of,
@@ -993,12 +1075,21 @@ static int memcg_swap_stat_show(struct seq_file *m, void *v)
 	unsigned long cur_eswap_size;
 	unsigned long max_eswap_size;
 	unsigned long zram_compress_size, zram_page_size;
+	unsigned long zram_chp_compress_size, zram_chp_page_size;
 	unsigned long eswap_compress_size, eswap_page_size;
 
 	memcg = mem_cgroup_from_css(seq_css(m));
 
 	zram_compress_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_STORED_SZ);
 	zram_page_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_STORED_PG_SZ);
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	zram_chp_compress_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_CHP_STORED_SZ);
+	zram_chp_page_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_CHP_STORED_PG_SZ);
+#else
+	/* Compatible with Osense, here are placeholders */
+	zram_chp_compress_size = 0UL;
+	zram_chp_page_size = 0UL;
+#endif
 	eswap_compress_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_STORED_SZ);
 	eswap_page_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_STORED_PG_SZ);
 
@@ -1014,6 +1105,10 @@ static int memcg_swap_stat_show(struct seq_file *m, void *v)
 			zram_compress_size / SZ_1K);
 	seq_printf(m, "%-32s %12lu KB\n", "zramOrignalSize:",
 			zram_page_size << (PAGE_SHIFT - 10));
+	seq_printf(m, "%-32s %12lu KB\n", "zramCHPCompressedSize:",
+			zram_chp_compress_size / SZ_1K);
+	seq_printf(m, "%-32s %12lu KB\n", "zramCHPOrignalSize:",
+			zram_chp_page_size << (PAGE_SHIFT - 10));
 	seq_printf(m, "%-32s %12lu KB\n", "eswapCompressedSize:",
 			eswap_compress_size / SZ_1K);
 	seq_printf(m, "%-32s %12lu KB\n", "eswapOrignalSize:",
@@ -1025,6 +1120,95 @@ static int memcg_swap_stat_show(struct seq_file *m, void *v)
 	seq_printf(m, "%-32s %12lu\n", "pageInTotal:", page_fault_cnt);
 	seq_printf(m, "%-32s %12lu KB\n", "eswapSizeCur:", cur_eswap_size / SZ_1K);
 	seq_printf(m, "%-32s %12lu KB\n", "eswapSizeMax:", max_eswap_size / SZ_1K);
+	seq_printf(m, "%-32s %12lu\n", "pageInactiveAnon:",
+		   memcg_lru_pages(memcg, LRU_INACTIVE_ANON, false));
+	seq_printf(m, "%-32s %12lu\n", "pageActiveAnon:",
+		   memcg_lru_pages(memcg, LRU_ACTIVE_ANON, false));
+	seq_printf(m, "%-32s %12lu\n", "pageInactiveFile:",
+		   memcg_lru_pages(memcg, LRU_INACTIVE_FILE, false));
+	seq_printf(m, "%-32s %12lu\n", "pageActiveFile:",
+		   memcg_lru_pages(memcg, LRU_ACTIVE_FILE, false));
+	seq_printf(m, "%-32s %12lu\n", "pageInactiveChpAnon:",
+		   memcg_lru_pages(memcg, LRU_INACTIVE_ANON, true));
+	seq_printf(m, "%-32s %12lu\n", "pageActiveChpAnon:",
+		   memcg_lru_pages(memcg, LRU_ACTIVE_ANON, true));
+
+	if (chp_supported && !nandswapV2_supported())
+		seq_printf(m, "%-32s %12lu\n", "zramOrignalTotal:",
+			memcg_page_state_local(memcg, MEMCG_SWAP));
+	else
+		seq_printf(m, "%-32s %12lu\n", "zramOrignalTotal:",
+			zram_page_size + zram_chp_page_size);
+
+	seq_printf(m, "%-32s %12lu\n", "memcgSwap:",
+		   memcg_page_state_local(memcg, MEMCG_SWAP));
+
+	return 0;
+}
+
+static int memcg_swap_stat_array_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = NULL;
+	unsigned long eswap_out_cnt;
+	unsigned long eswap_out_size;
+	unsigned long eswap_in_size;
+	unsigned long eswap_in_cnt;
+	unsigned long page_fault_cnt;
+	unsigned long cur_eswap_size;
+	unsigned long max_eswap_size;
+	unsigned long zram_compress_size, zram_page_size;
+	unsigned long zram_chp_compress_size, zram_chp_page_size;
+	unsigned long eswap_compress_size, eswap_page_size;
+
+	memcg = mem_cgroup_from_css(seq_css(m));
+
+	zram_compress_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_STORED_SZ);
+	zram_page_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_STORED_PG_SZ);
+#ifdef CONFIG_CONT_PTE_HUGEPAGE_64K_ZRAM
+	zram_chp_compress_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_CHP_STORED_SZ);
+	zram_chp_page_size = hybridswap_read_memcg_stats(memcg, MCG_ZRAM_CHP_STORED_PG_SZ);
+#else
+	/* Compatible with Osense, here are placeholders */
+	zram_chp_compress_size = 0UL;
+	zram_chp_page_size = 0UL;
+#endif
+	eswap_compress_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_STORED_SZ);
+	eswap_page_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_STORED_PG_SZ);
+
+	eswap_out_cnt = hybridswap_read_memcg_stats(memcg, MCG_ESWAPOUT_CNT);
+	eswap_out_size = hybridswap_read_memcg_stats(memcg, MCG_ESWAPOUT_SZ);
+	eswap_in_size = hybridswap_read_memcg_stats(memcg, MCG_ESWAPIN_SZ);
+	eswap_in_cnt = hybridswap_read_memcg_stats(memcg, MCG_ESWAPIN_CNT);
+	page_fault_cnt = hybridswap_read_memcg_stats(memcg, MCG_DISK_FAULT_CNT);
+	cur_eswap_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_SPACE);
+	max_eswap_size = hybridswap_read_memcg_stats(memcg, MCG_DISK_SPACE_PEAK);
+
+	seq_printf(m, "%lu ", zram_compress_size / SZ_1K);
+	seq_printf(m, "%lu ", zram_page_size << (PAGE_SHIFT - 10));
+	seq_printf(m, "%lu ", zram_chp_compress_size / SZ_1K);
+	seq_printf(m, "%lu ", zram_chp_page_size << (PAGE_SHIFT - 10));
+	seq_printf(m, "%lu ", eswap_compress_size / SZ_1K);
+	seq_printf(m, "%lu ", eswap_page_size << (PAGE_SHIFT - 10));
+	seq_printf(m, "%lu ", eswap_out_cnt);
+	seq_printf(m, "%lu ", eswap_out_size / SZ_1K);
+	seq_printf(m, "%lu ", eswap_in_cnt);
+	seq_printf(m, "%lu ", eswap_in_size / SZ_1K);
+	seq_printf(m, "%lu ", page_fault_cnt);
+	seq_printf(m, "%lu ", cur_eswap_size / SZ_1K);
+	seq_printf(m, "%lu ", max_eswap_size / SZ_1K);
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_INACTIVE_ANON, false));
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_ACTIVE_ANON, false));
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_INACTIVE_FILE, false));
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_ACTIVE_FILE, false));
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_INACTIVE_ANON, true));
+	seq_printf(m, "%lu ", memcg_lru_pages(memcg, LRU_ACTIVE_ANON, true));
+
+	if (chp_supported && !nandswapV2_supported())
+		seq_printf(m, "%lu ", memcg_page_state_local(memcg, MEMCG_SWAP));
+	else
+		seq_printf(m, "%lu ", zram_page_size + zram_chp_page_size);
+
+	seq_printf(m, "%lu\n", memcg_page_state_local(memcg, MEMCG_SWAP));
 
 	return 0;
 }
@@ -1119,10 +1303,6 @@ int mem_cgroup_app_uid_write(struct cgroup_subsys_state *css,
 			return -EINVAL;
 	}
 
-	if (!hybs) {
-		return -EINVAL;
-	}
-
 	if (atomic64_read(&MEMCGRP_ITEM(memcg, app_uid)) != val)
 		atomic64_set(&MEMCGRP_ITEM(memcg, app_uid), val);
 
@@ -1185,6 +1365,47 @@ static s64 mem_cgroup_ub_ufs2zram_ratio_read(struct cgroup_subsys_state *css,
 	return atomic64_read(&MEMCGRP_ITEM(memcg, ub_ufs2zram_ratio));
 }
 
+static int mem_cgroup_force_swapin_percent_write(struct cgroup_subsys_state *css,
+		struct cftype *cft, s64 val)
+{
+	struct mem_cgroup *memcg;
+	unsigned long total_pages, eswap_page_size, eswap_compress_size;
+	long nr_to_preload;
+
+	if (val < 0)
+		return 0;
+
+	if (val > 100)
+		val = 100;
+
+	memcg = mem_cgroup_from_css(css);
+	total_pages = get_total_memcg_anon_pages(memcg, NULL, NULL, NULL, NULL, &eswap_page_size);
+	eswap_compress_size = hybridswap_read_memcg_stats(memcg,
+				MCG_DISK_STORED_SZ);
+
+	nr_to_preload = eswap_page_size - total_pages * (100 - val) / 100;
+
+	log_info("%lld%% are %llu pages, now nand stores %lu pages, nr_to_preload: %ld",
+		val, total_pages * val / 100, eswap_page_size, nr_to_preload);
+
+	if (nr_to_preload <= 0)
+		return 0;
+
+	val = nr_to_preload * 100 / eswap_page_size;
+
+	log_info("need swapin %lld%% of nandswap", val);
+
+	nr_to_preload = EXTENT_ALIGN_UP(eswap_compress_size * val / 100);
+
+	log_info("final nr_to_preload: %ld KB (ALIGN)", nr_to_preload / SZ_1K);
+
+#ifdef CONFIG_HYBRIDSWAP_CORE
+	hybridswap_batch_out(memcg, nr_to_preload, true);
+#endif
+
+	return 0;
+}
+
 static int mem_cgroup_force_swapin_write(struct cgroup_subsys_state *css,
 		struct cftype *cft, s64 val)
 {
@@ -1210,11 +1431,53 @@ static int mem_cgroup_force_swapin_write(struct cgroup_subsys_state *css,
 	return 0;
 }
 
+static int mem_cgroup_force_swapout_percent_write(struct cgroup_subsys_state *css,
+		struct cftype *cft, s64 val)
+{
+	unsigned long zram, eswap_page_size, total_pages;
+	long nr_to_swapout;
+	struct mem_cgroup * memcg;
+
+	if (val < 0)
+		return 0;
+
+	if (val > 100)
+		val = 100;
+
+	memcg = mem_cgroup_from_css(css);
+	total_pages = get_total_memcg_anon_pages(memcg,
+		NULL, NULL, &zram, NULL, &eswap_page_size);
+
+	nr_to_swapout = total_pages * val / 100 - eswap_page_size;
+
+	log_info("%lld%% are %llu pages, nr_to_swapout: %ld",
+		val, total_pages * val / 100, nr_to_swapout);
+
+	if (nr_to_swapout <= 0) {
+		return 0;
+	}
+
+	nr_to_swapout = nr_to_swapout > zram ?
+		zram : nr_to_swapout;
+
+	val = nr_to_swapout * 100 / zram;
+	if (val == 0)
+		val = 1;
+
+	log_info("zram total stores %lu pages, need swapout %lld%% of zram (%ld pages)",
+		zram, val, nr_to_swapout);
+
+#ifdef CONFIG_HYBRIDSWAP_CORE
+	hybridswap_force_reclaim(mem_cgroup_from_css(css), val);
+#endif
+	return 0;
+}
+
 static int mem_cgroup_force_swapout_write(struct cgroup_subsys_state *css,
 		struct cftype *cft, s64 val)
 {
 #ifdef CONFIG_HYBRIDSWAP_CORE
-	hybridswap_force_reclaim(mem_cgroup_from_css(css));
+	hybridswap_force_reclaim(mem_cgroup_from_css(css), val);
 #endif
 	return 0;
 }
@@ -1271,6 +1534,10 @@ EXPORT_SYMBOL_GPL(get_next_memcg_break);
 
 static struct cftype mem_cgroup_hybridswap_legacy_files[] = {
 	{
+		.name = "force_shrink_anon_percent",
+		.write = mem_cgroup_force_shrink_anon_percent,
+	},
+	{
 		.name = "force_shrink_anon",
 		.write = mem_cgroup_force_shrink_anon,
 	},
@@ -1290,6 +1557,10 @@ static struct cftype mem_cgroup_hybridswap_legacy_files[] = {
 	{
 		.name = "swap_stat",
 		.seq_show = memcg_swap_stat_show,
+	},
+	{
+		.name = "swap_stat_array",
+		.seq_show = memcg_swap_stat_array_show,
 	},
 	{
 		.name = "name",
@@ -1312,8 +1583,16 @@ static struct cftype mem_cgroup_hybridswap_legacy_files[] = {
 		.read_s64 = mem_cgroup_ub_ufs2zram_ratio_read,
 	},
 	{
+		.name = "force_swapin_percent",
+		.write_s64 = mem_cgroup_force_swapin_percent_write,
+	},
+	{
 		.name = "force_swapin",
 		.write_s64 = mem_cgroup_force_swapin_write,
+	},
+	{
+		.name = "force_swapout_percent",
+		.write_s64 = mem_cgroup_force_swapout_percent_write,
 	},
 	{
 		.name = "force_swapout",
@@ -1351,7 +1630,7 @@ static int hybridswap_enable(struct zram **zram_arr)
 #endif
 
 #ifdef CONFIG_HYBRIDSWAP_CORE
-	if (!chp_supported) {
+	if (!chp_supported || nandswapV2_supported()) {
 		ret = hybridswap_core_enable();
 		if (ret)
 			goto hybridswap_core_enable_fail;

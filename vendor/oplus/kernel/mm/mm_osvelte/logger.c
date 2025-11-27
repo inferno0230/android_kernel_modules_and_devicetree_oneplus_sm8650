@@ -37,6 +37,7 @@
 #include <asm/ioctls.h>
 
 #include "logger.h"
+#include "internal.h"
 #include "common.h"
 #include "memstat.h"
 #include "sys-memstat.h"
@@ -74,6 +75,7 @@ struct logger_log {
 };
 
 static LIST_HEAD(log_list);
+struct kobject *oplus_mm_kobj;
 
 static inline void current_kernel_time(struct timespec64 *ts)
 {
@@ -626,6 +628,10 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 	}
 
+	ret = osvelte_common_ioctl(file, cmd, arg);
+	if (ret != CMD_COMMON_INVLAID)
+		return ret;
+
 	ret = proc_memstat_ioctl(file, cmd, arg);
 	if (ret != CMD_PROC_MS_INVALID)
 		return ret;
@@ -817,6 +823,7 @@ static const char * const kswapd_like_comm[] = {
 	/* no support numa for now */
 	"kswapd0",
 	"kcompactd0",
+	"kcompressd"
 };
 
 static void iter_kthread_and_show(struct seq_file *s,
@@ -861,6 +868,7 @@ static int __init logger_init(void)
 {
 	int ret;
 	struct proc_dir_entry *root;
+	struct kobject *osvelte_kobj;
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE_DBG)
 	struct proc_dir_entry *subdir_root;
 #endif
@@ -870,6 +878,22 @@ static int __init logger_init(void)
 		pr_err("create osvelte dir failed\n");
 		ret = -ENOMEM;
 		goto out;
+	}
+
+	/* move proc to sysfs */
+	oplus_mm_kobj = kobject_create_and_add("oplus_mm", kernel_kobj);
+	if (!oplus_mm_kobj) {
+		osvelte_loge("create oplus_mm_kobj failed\n");
+		ret = -ENOMEM;
+		goto remove_procfs;
+	}
+
+	osvelte_kobj = kobject_create_and_add("osvelte", oplus_mm_kobj);
+	if (!osvelte_kobj) {
+		pr_err("Failed to create osvelte kobj\n");
+		ret = -ENOMEM;
+		kobject_put(oplus_mm_kobj);
+		goto remove_procfs;
 	}
 
 	proc_create("info", 0444, root, &info_proc_ops);
@@ -896,6 +920,7 @@ static int __init logger_init(void)
 		goto remove_procfs;
 
 	mm_config_init(root);
+	osvelte_common_init(osvelte_kobj);
 
 	ret = create_log(DEV_NAME, 512 * 1024);
 	if (unlikely(ret))
@@ -924,6 +949,7 @@ static void __exit logger_exit(void)
 	osvelte_lowmem_dbg_exit();
 	sys_memstat_exit();
 	mm_config_exit();
+	osvelte_common_exit();
 }
 device_initcall(logger_init);
 module_exit(logger_exit);

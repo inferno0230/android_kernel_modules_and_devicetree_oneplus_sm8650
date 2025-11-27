@@ -1094,6 +1094,8 @@ int ipa3_enable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx,
 			!ipa3_ctx->uc_ctx.uc_event_ring_valid) {
 			if (ipa3_uc_setup_event_ring())	{
 				IPAERR("failed to set uc_event ring\n");
+				//Maiwentian.Network.RF porting qcom patch CR:3925161,3941555, 3943399
+				IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(ipa_ep_idx_tx));
 				return -EFAULT;
 			}
 		} else

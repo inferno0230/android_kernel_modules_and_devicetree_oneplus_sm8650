@@ -27,69 +27,64 @@ static inline int __hbp_spi_alloc_mem(struct spi_transfer **spi_xfer,
 				      uint8_t **tx,
 				      size_t tx_size,
 				      uint8_t **rx,
-				      size_t rx_size)
+				      size_t rx_size,
+				      struct spi_cache *cache)
 {
 	int ret = 0;
-	static struct spi_transfer *xfer = NULL;
-	static uint32_t xfer_count = 0;
-	static uint8_t *tx_buf = NULL;
-	static size_t tx_count = 0;
-	static uint8_t *rx_buf = NULL;
-	static size_t rx_count = 0;
 
-	if (xfer_len > xfer_count) {
-		kfree(xfer);
-		xfer = kcalloc(xfer_len, sizeof(struct spi_transfer), GFP_KERNEL);
-		if (!xfer) {
-			xfer_count = 0;
+	if (xfer_len > cache->xfer_count) {
+		kfree(cache->xfer);
+		cache->xfer = kcalloc(xfer_len, sizeof(struct spi_transfer), GFP_DMA);
+		if (!cache->xfer) {
+			cache->xfer_count = 0;
 			ret = -ENOMEM;
 			hbp_err("Failed to calloc memory\n");
 			goto err_exit;
 		} else {
-			xfer_count = xfer_len;
+			cache->xfer_count = xfer_len;
 		}
 	} else {
-		memset(xfer, 0, xfer_len*sizeof(struct spi_transfer));
+		memset(cache->xfer, 0, xfer_len*sizeof(struct spi_transfer));
 	}
 
-	if (tx_size > tx_count) {
-		kfree(tx_buf);
-		tx_buf = (uint8_t *)kmalloc(tx_size, GFP_KERNEL);
-		if (!tx_buf) {
-			tx_count = 0;
+	if (tx_size > cache->tx_count) {
+		kfree(cache->tx_buf);
+		cache->tx_buf = (uint8_t *)kmalloc(tx_size, GFP_DMA);
+		if (!cache->tx_buf) {
+			cache->tx_count = 0;
 			ret = -ENOMEM;
 			hbp_err("Failed to malloc tx memory\n");
 			goto err_exit;
 		}
-		tx_count = tx_size;
+		cache->tx_count = tx_size;
 	}
 
 	if (tx_size) {
-		memset(tx_buf, 0xFF, tx_size);
+		memset(cache->tx_buf, 0xFF, tx_size);
 	}
 
-	if (rx_size > rx_count) {
-		kfree(rx_buf);
-		rx_buf = (uint8_t *)kmalloc(rx_size, GFP_KERNEL);
-		if (!rx_buf) {
-			rx_count = 0;
+	if (rx_size > cache->rx_count) {
+		kfree(cache->rx_buf);
+		cache->rx_buf = (uint8_t *)kmalloc(rx_size, GFP_DMA);
+		if (!cache->rx_buf) {
+			cache->rx_count = 0;
 			ret = -ENOMEM;
 			hbp_err("Failed to malloc rx memory\n");
 			goto err_exit;
 		}
-		rx_count = rx_size;
+		cache->rx_count = rx_size;
 	}
 	if (rx_size) {
-		memset(rx_buf, 0xFF, rx_size);
+		memset(cache->rx_buf, 0xFF, rx_size);
 	}
 
-	*spi_xfer = xfer;
+	*spi_xfer = cache->xfer;
 	if (tx_size) {
-		*tx = tx_buf;
+		*tx = cache->tx_buf;
 	}
 
 	if (rx_size) {
-		*rx = rx_buf;
+		*rx = cache->rx_buf;
 	}
 
 err_exit:
@@ -121,14 +116,16 @@ static inline int __hbp_spi_read_block(struct spi_device *spi_dev,
 					  &tx_buf,
 					  tx_size + rx_size,
 					  &rx_buf,
-					  rx_size);
+					  rx_size,
+					  &param->cache);
 	} else {
 		ret = __hbp_spi_alloc_mem(&xfer,
 					  1,
 					  &tx_buf,
 					  rx_size,
 					  &rx_buf,
-					  rx_size);
+					  rx_size,
+					  &param->cache);
 	}
 
 	if (ret < 0) {
@@ -221,7 +218,8 @@ static inline int __hbp_spi_write_block(struct spi_device *spi_dev,
 				  &tx_buf,
 				  tx_size,
 				  NULL,
-				  0);
+				  0,
+				  &param->cache);
 
 	if (ret < 0) {
 		hbp_err("Failed to alloc memory\n");
@@ -280,7 +278,8 @@ static int __hbp_spi_sync(struct spi_device *spi, u8 *tx, u8 *rx, u32 len, struc
 				  &tx_buf,
 				  len,
 				  &rx_buf,
-				  len);
+				  len,
+				  &param->cache);
 
 	if (tx) {
 		memcpy(tx_buf, tx, len);
@@ -305,9 +304,17 @@ static int __hbp_spi_sync(struct spi_device *spi, u8 *tx, u8 *rx, u32 len, struc
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#define spi_master			spi_controller
+#endif
+
 static inline bool hbp_spi_bus_ready(struct spi_device *spi_dev)
 {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+	struct spi_master *master = spi_dev->controller;
+#else
 	struct spi_master *master = spi_dev->master;
+#endif
 	struct device *ctrl_dev;
 	int retry = 100;
 	static int error_cnt = 0;
@@ -512,6 +519,8 @@ static int hbp_spi_probe(struct spi_device *spi_dev)
 	int ret = 0;
 	struct platform_device *spi_platform;
 	struct spi_bus *bus;
+	struct device_node *np = spi_dev->dev.of_node;
+	int cs_setup[2] = {0, 0};
 
 	hbp_info("enter.\n");
 
@@ -543,6 +552,14 @@ static int hbp_spi_probe(struct spi_device *spi_dev)
 	bus->spi_ops.shutdown = hbp_spi_shutdown;
 	bus->spi_ops.spi_set_para = hbp_spi_setup;
 	bus->spi_ops.spi_get_para = hbp_spi_get_para;
+	ret = of_property_read_u32_array(np, "spi-cs-setup", cs_setup, 2);
+	if (ret) {
+		hbp_info("spi-cs-setup is null\n");
+	} else {
+		bus->spi_dev->cs_setup.value = cs_setup[0];
+		bus->spi_dev->cs_setup.unit = cs_setup[1];
+		hbp_info("cs_setup %d %d\n", cs_setup[0], cs_setup[1]);
+	}
 
 	spi_set_drvdata(spi_dev, bus);
 

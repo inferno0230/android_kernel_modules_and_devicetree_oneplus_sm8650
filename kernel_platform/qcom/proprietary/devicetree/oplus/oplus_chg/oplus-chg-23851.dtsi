@@ -140,6 +140,8 @@
 					OPLUS_IC_FUNC_SET_TYPEC_MODE
 					OPLUS_IC_FUNC_BUCK_GET_USB_BTB_TEMP
 					OPLUS_IC_FUNC_BUCK_GET_BATT_BTB_TEMP
+					OPLUS_IC_FUNC_BUCK_GET_USB_AICL_ENHANCE
+					OPLUS_IC_FUNC_BUCK_SET_AICL_POINT
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -247,6 +249,7 @@
 				OPLUS_IC_FUNC_GAUGE_SET_LAST_CC
 				OPLUS_IC_FUNC_GAUGE_GET_LAST_CC
 				OPLUS_IC_FUNC_GAUGE_GET_CHEM_ID
+				OPLUS_IC_FUNC_GAUGE_GET_GAUGE_CAR_C
 			>;
 			virqs = <
 				OPLUS_IC_VIRQ_ERR
@@ -1551,6 +1554,7 @@
 	pinctrl-0 = <&svooc_mos_btb_therm_default>,
 			<&batt_conn_therm_gpio_default>;
 	pinctrl-1 = <&subboard_temp_gpio_default>;
+	oplus,usb_aicl_enhance;
 
 	oplus,voocphy_support;
 	qcom,otg_boost_src = <0>; /* 0:plat_pmic 1:external */

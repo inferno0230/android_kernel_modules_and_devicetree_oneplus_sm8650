@@ -78,7 +78,7 @@ static int io_wait_count = 0;
 #define THEIA_KEY_PROCESS_HUNG_APPID 20120
 #define THEIA_LOG_TAG "CriticalLog"
 #define THEIA_EVENT_ID "Theia"
-#define THEIA_LOG_TYPE_INIT_HUNG "init_hung"
+#define THEIA_LOG_TYPE_INIT_HUNG "hung_task"
 
 static long get_timestamp_ms(void)
 {
@@ -106,6 +106,11 @@ static bool is_usersapce_key_process(struct task_struct *t)
 	if (!strcmp(t->comm, "init") && (tcred->uid.val == 0)
 			&& ((t->parent != 0) && !strcmp(t->parent->comm, "init") && (t->parent->pid == 1)))
 		return true;
+#if (!IS_ENABLED(CONFIG_OPLUS_DDK_MTK))
+	if (!strcmp(t->comm, "watchdog") && (!strcmp(t->group_leader->comm, "system_server"))) {
+		return true;
+	}
+#endif
 	return false;
 }
 
@@ -221,20 +226,24 @@ static void oplus_check_hung_task(struct task_struct *t, unsigned long timeout, 
 	/* kill D/T/t state tasks ,if this task blocked at iowait. so maybe we should reboot system first */
 	if(t->in_iowait){
 		printk(KERN_ERR "DeathHealer task %s:%d io wait too long time\n", t->comm, t->pid);
-                if(t->mm != NULL && t == t->group_leader)// only work on user main thread
-                {
+		if(t->mm != NULL && t == t->group_leader) { /* only work on user main thread */
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
-                        io_wait_count = io_wait_count + 1;
+			io_wait_count = io_wait_count + 1;
 #else
-                        *iowait_count = *iowait_count + 1;
+			*iowait_count = *iowait_count + 1;
 #endif
-                        local_iowait = 1;
+			local_iowait = 1;
 #if IS_ENABLED(CONFIG_OPLUS_FEATURE_THEIA) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0))
 			memset(extra_info, 0, sizeof(extra_info));
 			snprintf(extra_info, sizeof(extra_info), "DeathHealer task %s:%d io wait too long time", t->comm, t->pid);
+#if IS_ENABLED (CONFIG_OPLUS_FEATURE_HUNGTASK_GAIA)
+			trace_init_hung(get_timestamp_ms(), THEIA_KEY_PROCESS_HUNG_APPID, THEIA_LOG_TAG, THEIA_EVENT_ID,
+				THEIA_LOG_TYPE_INIT_HUNG, extra_info);
+#else
 			theia_send_event(THEIA_EVENT_HUNGTASK, THEIA_LOGINFO_ANDROID_LOG | THEIA_LOGINFO_KERNEL_LOG, t->pid, extra_info);
 #endif
-                }
+#endif
+		}
 	}
 	if (is_usersapce_key_process(t))
 	{

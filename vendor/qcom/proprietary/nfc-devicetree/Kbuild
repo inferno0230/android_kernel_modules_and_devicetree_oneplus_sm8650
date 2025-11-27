@@ -46,6 +46,9 @@ dtbo-y += nxp/pitti-nfc.dtbo \
           nxp/pitti-nfc-qrd.dtbo
 endif
 
+#PLUS_DTS_OVERLAY start
+dtbo-y += oplus/lexus-24881-nfc-cliffs-overlay.dtbo
+#PLUS_DTS_OVERLAY end
 
 always-y	:= $(dtb-y) $(dtbo-y)
 subdir-y	:= $(dts-dirs)

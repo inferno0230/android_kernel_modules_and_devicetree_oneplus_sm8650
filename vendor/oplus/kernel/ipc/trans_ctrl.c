@@ -39,7 +39,7 @@
 #include <drivers/android/binder_internal.h>
 
 #include "trans_ctrl.h"
-
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
 struct ob_struct ob_target;
 pid_t ob_pid;
 
@@ -110,14 +110,9 @@ int get_task_cgroup_id(struct task_struct *task)
 	return css ? css->id : -1;
 }
 
-bool test_task_bg(struct task_struct *task)
-{
-	return (BT_CGROUP_BACKGROUND == get_task_cgroup_id(task)) ? 1 : 0;
-}
-
 bool obtrans_is_from_background(struct binder_transaction *t)
 {
-	return test_task_bg(t->from->task);
+	return bg_task(t->from->task);
 }
 
 bool obtrans_is_from_third_party(struct binder_transaction *t)

@@ -176,11 +176,10 @@ export TARGET_BUILD_VARIANT=$O_BUILD_TYPE
 export ANDROID_BUILD_TOP=${TOPDIR}
 export ANDROID_KERNEL_OUT=${ANDROID_BUILD_TOP}/device/qcom/${KERNEL_TARGET}-kernel
 export ANDROID_KP_OUT_DIR="out/msm-kernel-${KERNEL_TARGET}-${KERNEL_VARIANT}"
-export ANDROID_PRODUCT_OUT=${TOPDIR}/out/target/product/$KERNEL_TARGET
+export ANDROID_PRODUCT_OUT=${TOPDIR}/out/target/product/$COMPILE_PLATFORM
 export TARGET_BOARD_PLATFORM=$KERNEL_TARGET
 KERNEL_ROOT=${TOPDIR}/kernel_platform
-INTREE_MODULE_OUT=${KERNEL_ROOT}/bazel-bin/msm-kernel/${KERNEL_TARGET}_${KERNEL_VARIANT}
-
+INTREE_MODULE_OUT=$(cd kernel_platform;find out/bazel/output_user_root/ -type d -wholename '*/execroot/__main__/bazel-out/k8-fastbuild/bin' | head -n 1)/msm-kernel/${KERNEL_TARGET}_${KERNEL_VARIANT}
 #是否全编译环境检测
 if ! cat "$ANDROID_PRODUCT_OUT/previous_build_config.mk" | grep -qw "$O_BUILD_TYPE"; then
     echo -e "
@@ -335,18 +334,21 @@ if [ -n "$IAMGES" ];then
 fi
 
 #输出验证建议信息
-tput setaf 2
+tput setaf 1
 cat ${message}
 echo
+tput setaf 2
 echo "vendor/oplus下的oplus DDK KO一般在vendor_dlkm,可以直接push或者编译vendor_dlkm.img验证修改，只有登记在
 kernel_platform/oplus/config/modules.vendor_boot.list.oplus中的才会打包在vendor_boot中在init第一阶段加载
 KO生成路径在device/qcom/sun-kernel，push前先使用如下命令做好strip
 kernel_platform/prebuilts/clang/host/linux-x86/llvm-binutils-stable/llvm-strip -S *.ko -o yourpath/*.ko"
 echo
+tput setaf 1
 if [ -n "$IAMGES" ];then
     echo "根据您指定的target，已为您编译出 $IAMGES.请确保您没有修改过Android.mk Android.bp否则-N生成的image会失效"
     echo
 fi
+tput setaf 2
 echo "如果发现本脚本使用-n生成的image有问题，可以尝试使用./mk_android.sh -t user -m xxx"
 rm ${message}
 tput sgr0

@@ -16,6 +16,21 @@
 #define UFS_METRICS_LAT(op)   \
     atomic64_t ufs_metrics_lat_##op[LAT_500M_TO_MAX + 1] = {0};
 
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+#define TEN_SECOND_SIZE 10
+#define ONE_SECOND_STATS_SIZE 5
+atomic64_t last_sec_record;
+
+struct {
+    atomic64_t one_sec_read_dist[ONE_SECOND_STATS_SIZE];
+    atomic64_t one_sec_write_dist[ONE_SECOND_STATS_SIZE];
+    atomic64_t one_sec_read_sz[ONE_SECOND_STATS_SIZE];
+    atomic64_t one_sec_write_sz[ONE_SECOND_STATS_SIZE];
+    atomic64_t clear_flag;
+    char padding[48];
+} one_sec_ufs_metrics[TEN_SECOND_SIZE];
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
+
 UFS_METRICS_LAT(write);
 UFS_METRICS_LAT(read);
 
@@ -34,6 +49,67 @@ struct {
     atomic64_t write_elapse;
     char padding[16];
 } ufs_metrics[CYCLE_MAX] = {0};
+
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+void fill_one_sec_ufs_metrics(int index, ktime_t elapsed_in_ufs, u64 size, bool rw) {
+    int i = 0;
+    if (index < 0 || index > 9) {
+        io_metrics_print("fill_one_sec_ufs_metrics index out of memory index:%d\n", index);
+        return;
+    }
+    if(atomic64_read(&one_sec_ufs_metrics[index].clear_flag) == 0) {
+        atomic64_set(&one_sec_ufs_metrics[index].clear_flag, 1);
+        for (i = 0; i < ONE_SECOND_STATS_SIZE; i++) {
+            atomic64_set(&one_sec_ufs_metrics[index].one_sec_read_dist[i], 0);
+            atomic64_set(&one_sec_ufs_metrics[index].one_sec_write_dist[i], 0);
+            atomic64_set(&one_sec_ufs_metrics[index].one_sec_read_sz[i], 0);
+            atomic64_set(&one_sec_ufs_metrics[index].one_sec_write_sz[i], 0);
+        }
+    }
+    if (elapsed_in_ufs >= 0 && elapsed_in_ufs <= 2 * 1000 * 1000) {
+        if (rw) {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_read_dist[0]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_read_sz[0]);
+        } else {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_write_dist[0]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_write_sz[0]);
+        }
+    } else if (elapsed_in_ufs > 2 * 1000 * 1000 && elapsed_in_ufs <= 20 * 1000 * 1000) {
+        if (rw) {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_read_dist[1]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_read_sz[1]);
+        } else {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_write_dist[1]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_write_sz[1]);
+        }
+    } else if (elapsed_in_ufs > 20 * 1000 * 1000 && elapsed_in_ufs <= 100 * 1000 * 1000) {
+        if (rw) {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_read_dist[2]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_read_sz[2]);
+        } else {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_write_dist[2]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_write_sz[2]);
+        }
+    } else if (elapsed_in_ufs > 100 * 1000 * 1000 && elapsed_in_ufs <= 500 * 1000 * 1000) {
+        if (rw) {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_read_dist[3]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_read_sz[3]);
+        } else {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_write_dist[3]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_write_sz[3]);
+        }
+    } else if (elapsed_in_ufs > 500 * 1000 * 1000) {
+        if (rw) {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_read_dist[4]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_read_sz[4]);
+        } else {
+            atomic64_add(1, &one_sec_ufs_metrics[index].one_sec_write_dist[4]);
+            atomic64_add(size, &one_sec_ufs_metrics[index].one_sec_write_sz[4]);
+        }
+    }
+
+}
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 
 void cb_android_vh_ufs_compl_command(void *ignore, struct ufs_hba *hba,
                                      struct ufshcd_lrb *lrbp)
@@ -57,8 +133,22 @@ void cb_android_vh_ufs_compl_command(void *ignore, struct ufs_hba *hba,
         {
             int i;
             u64 current_time_ns, elapse;
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+            u64 elapse_s;
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
             transfer_len = be32_to_cpu(lrbp->ucd_req_ptr->sc.exp_data_transfer_len);
             current_time_ns = lrbp->compl_time_stamp;
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+            elapse_s = (current_time_ns - atomic64_read(&last_sec_record)) / (1 * 1000 * 1000 * 1000);
+            if (elapse_s >= 10) {
+                atomic64_set(&last_sec_record, current_time_ns);
+                for (i = 0; i < TEN_SECOND_SIZE; i++) {
+                    atomic64_set(&one_sec_ufs_metrics[i].clear_flag, 0);
+                }
+                elapse_s = 0;
+            }
+            fill_one_sec_ufs_metrics(elapse_s, elapsed_in_ufs, transfer_len, true);
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
             for (i = 0; i < CYCLE_MAX; i++) {
                 elapse = current_time_ns - atomic64_read(&ufs_metrics_timestamp[i]);
                 if (unlikely(elapse >= current_time_ns)) {
@@ -94,8 +184,22 @@ void cb_android_vh_ufs_compl_command(void *ignore, struct ufs_hba *hba,
         {
             int i;
             u64 current_time_ns, elapse;
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+            u64 elapse_s;
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
             transfer_len = be32_to_cpu(lrbp->ucd_req_ptr->sc.exp_data_transfer_len);
             current_time_ns = lrbp->compl_time_stamp;
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+            elapse_s = (current_time_ns - atomic64_read(&last_sec_record)) / (1 * 1000 * 1000 * 1000);
+            if (elapse_s >= 10) {
+                atomic64_set(&last_sec_record, current_time_ns);
+                for (i = 0; i < TEN_SECOND_SIZE; i++) {
+                    atomic64_set(&one_sec_ufs_metrics[i].clear_flag, 0);
+                }
+                elapse_s = 0;
+            }
+            fill_one_sec_ufs_metrics(elapse_s, elapsed_in_ufs, transfer_len, false);
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
             for (i = 0; i < CYCLE_MAX; i++) {
                 elapse = current_time_ns - atomic64_read(&ufs_metrics_timestamp[i]);
                 if (unlikely(elapse >= current_time_ns)) {
@@ -228,10 +332,78 @@ err:
 #endif
 }
 
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+static unsigned long long get_one_sec_dist(int index, bool rw)
+{
+    unsigned long long sum = 0;
+    int i = 0;
+    for (i = 0; i < TEN_SECOND_SIZE; i++) {
+        sum += rw ? atomic64_read(&one_sec_ufs_metrics[i].one_sec_read_dist[index]) : \
+                atomic64_read(&one_sec_ufs_metrics[i].one_sec_write_dist[index]);
+    }
+    return sum;
+}
+
+static unsigned long long get_one_sec_size(int index, bool rw)
+{
+    unsigned long long sum = 0;
+    int i = 0;
+    for (i = 0; i < TEN_SECOND_SIZE; i++) {
+        sum += rw ? atomic64_read(&one_sec_ufs_metrics[i].one_sec_read_sz[index]) : \
+                atomic64_read(&one_sec_ufs_metrics[i].one_sec_write_sz[index]);
+    }
+    return sum / (1024 * 1024);
+}
+
+
+static int ioLatencyStat_show(struct seq_file *seq_filp, void *data)
+{
+
+    seq_printf(seq_filp, "%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu \
+                        \n%llu, %llu",
+                        get_one_sec_dist(0, true),
+                        get_one_sec_size(0, true),
+                        get_one_sec_dist(1, true),
+                        get_one_sec_size(1, true),
+                        get_one_sec_dist(2, true),
+                        get_one_sec_size(2, true),
+                        get_one_sec_dist(3, true),
+                        get_one_sec_size(3, true),
+                        get_one_sec_dist(4, true),
+                        get_one_sec_size(4, true),
+                        get_one_sec_dist(0, false),
+                        get_one_sec_size(0, false),
+                        get_one_sec_dist(1, false),
+                        get_one_sec_size(1, false),
+                        get_one_sec_dist(2, false),
+                        get_one_sec_size(2, false),
+                        get_one_sec_dist(3, false),
+                        get_one_sec_size(3, false),
+                        get_one_sec_dist(4, false),
+                        get_one_sec_size(4, false));
+    return 0;
+}
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
+
 int ufs_metrics_proc_open(struct inode *inode, struct file *file)
 {
     return single_open(file, ufs_metrics_proc_show, file);
 }
+
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+int ioLatencyStat_proc_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, ioLatencyStat_show, file);
+}
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 
 void ufs_metrics_reset(void)
 {
@@ -256,4 +428,7 @@ void ufs_metrics_reset(void)
 void ufs_metrics_init(void)
 {
     ufs_metrics_reset();
+#ifdef CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS
+    atomic64_set(&last_sec_record, 0);
+#endif /* CONFIG_OPLUS_FEATURE_STORAGE_IOLATENCY_STATS */
 }

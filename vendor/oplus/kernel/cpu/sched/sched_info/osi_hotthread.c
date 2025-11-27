@@ -18,6 +18,7 @@
 #include "osi_topology.h"
 #include "osi_tasktrack.h"
 #include "osi_netlink.h"
+#include "../sched_assist/sa_group.h"
 
 
 struct rq_num {
@@ -112,13 +113,11 @@ int find_in_plist(struct task_struct *p,  struct oplus_task_struct *ots)
 {
 	struct hot_thread_node *tmp;
 	bool is_find = false;
-	int cpuctl_id;
 
-	cpuctl_id = task_cgroup_id(p);
 	plist_for_each_entry(tmp, &hot_thread_head, node) {
 		if (tmp->hot_thread_struct.pid == p->pid) {
 			/*find the same node, just update hot thread info*/
-			if (cpuctl_id ==  CGROUP_TOP_APP)
+			if (ta_task(p))
 				tmp->hot_thread_struct.top_app_cnt++;
 			else
 				tmp->hot_thread_struct.non_topapp_cnt++;
@@ -143,7 +142,6 @@ static int insert_hot_thread(struct oplus_task_struct *ots, struct task_struct *
 	struct task_struct *leader;
 	const struct cred *tcred;
 	uid_t uid;
-	int cpuctl_id;
 
 	rcu_read_lock();
 	tcred = __task_cred(p);
@@ -154,7 +152,6 @@ static int insert_hot_thread(struct oplus_task_struct *ots, struct task_struct *
 	}
 	uid = __kuid_val(tcred->uid);
 	rcu_read_unlock();
-	cpuctl_id = task_cgroup_id(p);
 	raw_spin_lock_irqsave(&hot_thread_lock, flags);
 	if (find_in_plist(p, ots) == -ESRCH) {
 			hot_thread_node = kmem_cache_zalloc(hot_thread_struct_cachep, GFP_ATOMIC);
@@ -173,7 +170,7 @@ static int insert_hot_thread(struct oplus_task_struct *ots, struct task_struct *
 			hot_thread_node->hot_thread_struct.uid = uid;
 			hot_thread_node->hot_thread_struct.top_app_cnt = 0;
 			hot_thread_node->hot_thread_struct.non_topapp_cnt = 0;
-			if (cpuctl_id == CGROUP_TOP_APP)
+			if (ta_task(p))
 				hot_thread_node->hot_thread_struct.top_app_cnt = 1;
 			else
 				hot_thread_node->hot_thread_struct.non_topapp_cnt = 1;

@@ -623,6 +623,9 @@ bool oplus_pipeline_task_skip_cpu(struct task_struct *task, unsigned int dst_cpu
 		if (!dislike_no_pipeline_task_run_on_prime_cpu)
 			return false;
 
+		if (task->nr_cpus_allowed <= prime_cpu_num)
+			return false;
+
 		/* other top app ui and render tasks can run on prime cpus, exclude audio tasks */
 		if ((ots->ux_state & SCHED_ASSIST_UX_PRIORITY_MASK) >= UX_PRIORITY_PIPELINE) {
 			if ((task->tgid != prime_tgid) &&
@@ -679,6 +682,24 @@ debug:
 	return skip;
 }
 EXPORT_SYMBOL_GPL(oplus_pipeline_task_skip_cpu);
+
+bool oplus_pipeline_rt_skip_prime_cpu(unsigned int dst_cpu)
+{
+	if (unlikely(!global_sched_assist_enabled))
+		return false;
+
+	if (likely(prime_task == NULL))
+		return false;
+
+	if ((prime_cpu_num == 1) && (dst_cpu == nr_cpu_ids - 1))
+		return true;
+
+	if ((prime_cpu_num == 2) && ((dst_cpu == nr_cpu_ids - 1) || (dst_cpu == nr_cpu_ids - 2)))
+		return true;
+
+	return false;
+}
+EXPORT_SYMBOL_GPL(oplus_pipeline_rt_skip_prime_cpu);
 
 core_ctl_set_boost_t oplus_core_ctl_set_boost = NULL;
 EXPORT_SYMBOL_GPL(oplus_core_ctl_set_boost);
@@ -779,7 +800,8 @@ static ssize_t pipeline_pids_proc_write(struct file *file,
 				task = pipeline_task[i];
 				ots = pipeline_ots[i];
 				atomic_set(&ots->pipeline_cpu, -1);
-				oplus_set_ux_state_lock(task, 0, -1, true);
+				if (!test_bit(IM_FLAG_AUDIO, &ots->im_flag))
+					oplus_set_ux_state_lock(task, 0, -1, true);
 
 				/* get_pid_task have called get_task_struct, now call put_task_struct */
 				put_task_struct(task);

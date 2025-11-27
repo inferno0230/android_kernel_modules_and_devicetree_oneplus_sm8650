@@ -473,7 +473,8 @@ def main():
 	logging.info('Parsed bases: \n{}'.format(all_bases))
 
 	logging.info('Parsing techpack dtb files from {}'.format(args.techpack))
-	techpacks = parse_dt_files(args.techpack)
+	techpacks_list = parse_dt_files(args.techpack)
+	techpacks = sorted(techpacks_list, key=lambda dt: (dt.proj_id is not None, dt.proj_id))
 	all_techpacks = '\n'.join(list(map(lambda x: str(x), techpacks)))
 	logging.info('Parsed techpacks: \n{}'.format(all_techpacks))
 

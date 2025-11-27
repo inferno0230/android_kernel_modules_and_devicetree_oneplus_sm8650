@@ -24,6 +24,10 @@
 static struct proc_dir_entry *d_task_info;
 static struct proc_dir_entry *d_cpu_jank_info;
 
+#if IS_ENABLED(CONFIG_OPLUS_PROCS_LOAD_STATE)
+	extern int osi_procs_cpu_usage_init(void);
+#endif
+
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 void android_vh_irqtime_account_process_tick_handler(
 			void *unused,
@@ -157,6 +161,10 @@ static int __init jank_info_init(void)
 	tasktrack_init();
 	jank_calcload_init();
 	oplus_healthinfo_proc_fs_init();
+
+#if IS_ENABLED(CONFIG_OPLUS_PROCS_LOAD_STATE)
+	osi_procs_cpu_usage_init();
+#endif
 
 	return 0;
 

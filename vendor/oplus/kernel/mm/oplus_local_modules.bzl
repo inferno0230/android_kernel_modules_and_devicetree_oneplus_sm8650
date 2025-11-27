@@ -33,12 +33,13 @@ def define_oplus_local_modules():
             "hybridswap_zram/hybridswap/hybridmain.c",
             "hybridswap_zram/hybridswap/hybridswapd.c",
             "hybridswap_zram/hybridswap/hybridswap.c",
+            "hybridswap_zram/kcompressd.c",
         ]),
         ko_deps = [
             "//vendor/oplus/kernel/mm:oplus_bsp_zsmalloc",
         ],
         includes = ["."],
-        local_defines = ["CONFIG_HYBRIDSWAP","CONFIG_HYBRIDSWAP_SWAPD","CONFIG_HYBRIDSWAP_CORE","CONFIG_CRYPTO_LZ4K"],
+        local_defines = ["CONFIG_HYBRIDSWAP","CONFIG_HYBRIDSWAP_SWAPD","CONFIG_HYBRIDSWAP_CORE","CONFIG_CRYPTO_LZ4K","CONFIG_KCOMPRESSD"],
         conditional_defines = {
              "qcom":  ["CONFIG_QCOM_PANEL_EVENT_NOTIFIER"],
              "mtk":  ["CONFIG_OPLUS_MTK_DRM_GKI_NOTIFY"],
@@ -66,6 +67,17 @@ def define_oplus_local_modules():
             "//build/kernel/kleaf:kocov_is_true": ["-fprofile-arcs", "-ftest-coverage"],
             "//conditions:default": [],
         }),
+    )
+
+    define_oplus_ddk_module(
+        name = "oplus_bsp_level_protect",
+
+        srcs = native.glob([
+            "**/*.h",
+            "levelprotect/levelprotect.c",
+        ]),
+        includes = ["."],
+        local_defines = ["CONFIG_OPLUS_LEVEL_PROTECT"],
     )
 
     define_oplus_ddk_module(
@@ -201,6 +213,7 @@ def define_oplus_local_modules():
             "oplus_bsp_sigkill_diagnosis",
             "oplus_bsp_zram_opt",
             "oplus_exit_mm_optimize",
+            "oplus_bsp_level_protect",
             "oplus_bsp_proactive_compact",
             "oplus_bsp_hybridswap_zram",
             "oplus_bsp_zsmalloc",

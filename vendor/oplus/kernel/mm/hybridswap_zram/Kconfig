@@ -14,6 +14,13 @@ config HYBRIDSWAP_ZRAM
 
 	  See Documentation/admin-guide/blockdev/zram.rst for more information.
 
+config KCOMPRESSD
+        tristate "Enable Kcompress"
+        depends on HYBRIDSWAP_ZRAM
+        default n
+        help
+          Enable Kcompress
+
 config HYBRIDSWAP_ZRAM_WRITEBACK
        bool "Write back incompressible or idle page to backing device"
        depends on HYBRIDSWAP_ZRAM

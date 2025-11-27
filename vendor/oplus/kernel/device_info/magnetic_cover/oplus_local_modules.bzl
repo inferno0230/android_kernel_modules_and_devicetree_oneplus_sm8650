@@ -42,6 +42,18 @@ def define_oplus_local_modules():
         includes = ["."],
     )
 
+    define_oplus_ddk_module(
+        name = "oplus_magcvr_mkh100a",
+        srcs = native.glob([
+            "**/*.h",
+            "magcvr_src/hardware/magcvr_mkh100a.c"
+        ]),
+        ko_deps = [
+            "//vendor/oplus/kernel/device_info/magnetic_cover:oplus_magnetic_cover",
+        ],
+        includes = ["."],
+    )
+
     ddk_headers(
         name = "config_headers",
         hdrs  = native.glob([

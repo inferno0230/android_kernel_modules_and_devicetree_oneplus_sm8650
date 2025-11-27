@@ -175,6 +175,29 @@ static int proc_magcvr_config_read(struct seq_file *s, void *v)
 	return ret;
 }
 
+static int init_calibration_threshold(struct magnetic_cover_info *magcvr_info)
+{
+	int ret = 0;
+	if (magcvr_info == NULL) {
+		MAG_CVR_ERR("magcvr_info==NULL !! \n");
+		return ret;
+	}
+
+	magcvr_info->far_threshold = magcvr_info->ori_far_threshold + magcvr_info->detect_offset;
+	magcvr_info->negative_far_threshold = magcvr_info->negative_ori_far_threshold - magcvr_info->detect_offset;
+	magcvr_info->far_noise_th = magcvr_info->ori_far_noise_th + magcvr_info->detect_offset;
+	magcvr_info->negative_far_noise_th = magcvr_info->negative_ori_far_noise_th - magcvr_info->detect_offset;
+
+	MAG_CVR_LOG("cali-> farTh[%d,%d] noiTh[%d,%d] offset[%d]\n",
+			    magcvr_info->negative_far_threshold,
+			    magcvr_info->far_threshold,
+			    magcvr_info->negative_far_noise_th,
+			    magcvr_info->far_noise_th,
+			    magcvr_info->detect_offset);
+
+	return ret;
+}
+
 // proc control for :: proc_distance_calib_write
 static ssize_t proc_distance_calib_write(struct file *file, const char __user *buffer,
 			size_t count, loff_t *ppos)
@@ -209,21 +232,11 @@ static ssize_t proc_distance_calib_write(struct file *file, const char __user *b
 		magcvr_info->cal_offset[magcvr_info->cal_offset_cnt] = magcvr_info->detect_offset;
 		magcvr_info->cal_offset_cnt++;
 
-		for (i = 0; i < CAL_OFFSET_MAX_CNT; i++)
+		for (i = 0; i < CAL_OFFSET_MAX_CNT; i++) {
 			MAG_CVR_LOG("healthinfo->offset[%d]:%d\n", i, magcvr_info->cal_offset[i]);
+		}
 
-		magcvr_info->far_threshold = magcvr_info->ori_far_threshold + magcvr_info->detect_offset;
-		magcvr_info->negative_far_threshold = magcvr_info->negative_ori_far_threshold - magcvr_info->detect_offset;
-		magcvr_info->far_noise_th = magcvr_info->ori_far_noise_th + magcvr_info->detect_offset;
-		magcvr_info->negative_far_noise_th = magcvr_info->negative_ori_far_noise_th - magcvr_info->detect_offset;
-
-		MAG_CVR_LOG("cali-> farTh[%d,%d] noiTh[%d,%d] offset[%d]\n",
-                magcvr_info->negative_far_threshold,
-                magcvr_info->far_threshold,
-                magcvr_info->negative_far_noise_th,
-                magcvr_info->far_noise_th,
-                magcvr_info->detect_offset);
-
+		ret = init_calibration_threshold(magcvr_info);
 		ret = magnetic_cover_get_data(magcvr_info);
 		ret = magcvr_set_position(magcvr_info);
 		ret = magcvr_set_threshold(magcvr_info);
@@ -239,7 +252,6 @@ static ssize_t proc_cur_state_read(struct file *file, char __user *user_buf,
 		size_t count, loff_t *ppos)
 {
 	struct magnetic_cover_info *magcvr_info = PDE_DATA(file_inode(file));
-
 	int ret = 0;
 	int value = 0;
 	char page[6] = {0};
@@ -257,6 +269,29 @@ static ssize_t proc_cur_state_read(struct file *file, char __user *user_buf,
 	return ret;
 }
 
+static ssize_t proc_magcvr_cali_read(struct file *file, char __user *user_buf,
+		size_t count, loff_t *ppos)
+{
+	struct magnetic_cover_info *magcvr_info = PDE_DATA(file_inode(file));
+	int ret = 0;
+	char page[6] = {0};
+	int value = -1;
+
+	if (!magcvr_info) {
+		MAG_CVR_ERR("g_magcvr_info null\n");
+		snprintf(page, 6, "%d\n", -1);
+		return ret;
+	} else {
+		MAG_CVR_DEBUG("call");
+		if(magcvr_info->no_need_calibration)
+			value = 0;
+		else
+			value = 1;
+		snprintf(page, 6, "%d\n", value);
+	}
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+	return ret;
+}
 // proc control for :: proc_magcvr_healthinfo_read
 static int proc_magcvr_healthinfo_read(struct seq_file *s, void *v)
 {
@@ -467,6 +502,9 @@ static int magcvr_parse_dts(struct device *dev,
 	    of_property_read_bool(m_node, "update_first_position");
 	MAG_CVR_LOG("update_first_position=%d\n", magcvr_info->update_first_position);
 
+	magcvr_info->no_need_calibration =
+	    of_property_read_bool(m_node, "no_need_calibration");
+	MAG_CVR_LOG("no_need_calibration=%d\n", magcvr_info->no_need_calibration);
 
 	magcvr_info->vddi = regulator_get(magcvr_info->magcvr_dev, M_1P8_NAME);
 	if (IS_ERR_OR_NULL(magcvr_info->vddi)) {
@@ -548,6 +586,12 @@ DECLARE_PROC_OPS(proc_magcvr_healthinfo_ops,
     proc_magcvr_healthinfo_write,
     NULL);
 
+DECLARE_PROC_OPS(proc_magcvr_cali_ops,
+    simple_open,
+    proc_magcvr_cali_read,
+    NULL,
+    NULL);
+
 int interface_for_proc_init(struct magnetic_cover_info *magcvr_info)
 {
 	struct proc_dir_entry *prEntry_magcvr     = NULL;
@@ -585,6 +629,15 @@ int interface_for_proc_init(struct magnetic_cover_info *magcvr_info)
             CHMOD,
             NULL,
             &proc_magcvr_healthinfo_ops,
+            magcvr_info,
+            false,
+            true
+        },
+        {
+            "magcvr_cali_support",
+            CHMOD,
+            NULL,
+            &proc_magcvr_cali_ops,
             magcvr_info,
             false,
             true
@@ -746,6 +799,7 @@ static int magcvr_update_first_position(struct magnetic_cover_info *magcvr_info)
 void mag_call_notifier(int position)
 {
 	struct magcvr_notify_event event_data;
+	int ret = 0;
 
 	memset(&event_data, 0, sizeof(struct magcvr_notify_event));
 	switch (position) {
@@ -764,8 +818,8 @@ void mag_call_notifier(int position)
 	}
 
 	event_data.type = position;
-	MAG_CVR_LOG("[transfer:nofity] posi->%d\n", event_data.type);
-	magcvr_event_call_notifier(EVENT_ACTION_FOR_MAGCVR, (void *)&event_data);
+	ret = magcvr_event_call_notifier(EVENT_ACTION_FOR_MAGCVR, (void *)&event_data);
+	MAG_CVR_LOG("[transfer:nofity] posi->%d ret:%d\n", event_data.type, ret);
 }
 #endif
 
@@ -826,6 +880,9 @@ int magcvr_set_position(struct magnetic_cover_info *magcvr_info)
 		}
 	}
 
+#if IS_ENABLED(CONFIG_OPLUS_MAGCVR_NOTIFY)
+	magcvr_set_current_pos(magcvr_info->position);
+#endif
 	magcvr_info->last_position = magcvr_info->position;
 
 	if (magcvr_info->driver_start == true) {
@@ -865,6 +922,7 @@ static int magcvr_init_something(struct magnetic_cover_info *magcvr_info)
 	magcvr_info->cal_offset_cnt= 0;
 	magcvr_info->iic_read_fail = 0;
 	magcvr_info->iic_write_fail = 0;
+	magcvr_info->detect_offset = 0;
 
 	for (i = 0; i < ERR_MAG_REG_MAX_CNT; i++)
 		magcvr_info->reg_err[i] = 0;
@@ -1048,7 +1106,7 @@ int magcvr_setup_eint(struct magnetic_cover_info *magcvr_info)
 			MAG_CVR_LOG("gpio[%d] set success \n", magcvr_info->irq_gpio);
 		}
 		ret = gpio_direction_input(magcvr_info->irq_gpio);
-		msleep(50);
+		msleep(10);
 		magcvr_info->irq = gpio_to_irq(magcvr_info->irq_gpio);
 		ret = 0;
 	} else {
@@ -1058,10 +1116,13 @@ int magcvr_setup_eint(struct magnetic_cover_info *magcvr_info)
 	}
 
 	if (magcvr_info->irq_type == EDGE_DOWN) {
-		irqflags = (IRQ_TYPE_EDGE_FALLING | IRQF_ONESHOT);
+		irqflags = IRQ_TYPE_EDGE_FALLING | IRQF_ONESHOT;
 		MAG_CVR_LOG("EDGE_FALLING->[GPIO:%d] [irq:%d]\n", magcvr_info->irq_gpio, magcvr_info->irq);
+	} else if (magcvr_info->irq_type == EDGE_DOUBLE) {
+		irqflags = IRQF_ONESHOT | IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING;
+		MAG_CVR_LOG("EDGE_DOUBLE->[GPIO:%d] [irq:%d]\n", magcvr_info->irq_gpio, magcvr_info->irq);
 	} else if (magcvr_info->irq_type == LOW_LEVEL) {
-		irqflags = (IRQ_TYPE_LEVEL_LOW | IRQF_ONESHOT);
+		irqflags = IRQ_TYPE_LEVEL_LOW | IRQF_ONESHOT;
 		MAG_CVR_LOG("LEVEL_LOW->[GPIO:%d] [irq:%d]\n", magcvr_info->irq_gpio, magcvr_info->irq);
 	}
 
@@ -1150,6 +1211,8 @@ int magcvr_core_init(struct magnetic_cover_info *magcvr_data)
 	} else {
 		MAG_CVR_DEBUG("magcvr_setup_eint success\n");
 	}
+
+	ret = init_calibration_threshold(magcvr_info);
 
 	ret = magnetic_cover_get_data(magcvr_info);
 	MAG_CVR_DEBUG("magnetic_cover_get_data is %d\n", ret);

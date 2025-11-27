@@ -22,6 +22,7 @@
 #include <linux/sort.h>
 
 #include <../kernel/oplus_cpu/sched/sched_assist/sa_common.h>
+#include <../kernel/oplus_cpu/sched/sched_assist/sa_group.h>
 #include "kern_lock_stat.h"
 #include "locking_main.h"
 
@@ -80,9 +81,6 @@ static char *func_str[LOCK_TYPES] = {
 
 static int get_task_grp_idx(void)
 {
-#ifdef CONFIG_OPLUS_INTERNAL_VERSION
-	struct cgroup_subsys_state *css;
-#endif
 	struct oplus_task_struct *ots;
 	int ret = GRP_OT;
 
@@ -95,22 +93,17 @@ static int get_task_grp_idx(void)
 
 #ifdef CONFIG_OPLUS_INTERNAL_VERSION
 	/* More group info can be found in internal version */
-	rcu_read_lock();
-	css = task_css(current, cpu_cgrp_id);
-
-	if (!css) {
-		ret = GRP_OT;
-	} else if (css->id == CGROUP_TOP_APP) {
+	struct task_struct *p = current;
+	if (ta_task(p)) {
 		ret = GRP_TA;
-	} else if (css->id == CGROUP_FOREGROUND) {
+	} else if (fg_task(p)) {
 		ret = GRP_FG;
-	} else if (css->id == CGROUP_BACKGROUND) {
+	} else if (bg_task(p)) {
 		ret = GRP_BG;
 	} else {
 		ret = GRP_OT;
 	}
 
-	rcu_read_unlock();
 #endif
 
 	return ret;
@@ -1498,6 +1491,8 @@ int kern_lstat_init(void)
 {
 	int ret;
 
+	fatal_collect_init();
+
 	REGISTER_HOOKS_HANDLE_RET(register_trace_android_vh_futex_wait_start,
 				android_vh_futex_wait_start_handler, NULL, err);
 	REGISTER_HOOKS_HANDLE_RET(register_trace_android_vh_futex_wait_end,
@@ -1514,7 +1509,6 @@ int kern_lstat_init(void)
 				android_vh_rwsem_write_wait_start_handler, NULL, err6);
 	REGISTER_HOOKS_HANDLE_RET(register_trace_android_vh_rwsem_write_wait_finish,
 				android_vh_rwsem_write_wait_finish_handler, NULL, err7);
-	fatal_collect_init();
 
 	ret = create_stats_procs();
 	if (ret < 0)

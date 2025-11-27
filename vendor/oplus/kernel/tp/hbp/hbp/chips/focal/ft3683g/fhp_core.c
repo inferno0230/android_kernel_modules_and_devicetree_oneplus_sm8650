@@ -36,11 +36,7 @@
 #endif
 #include <linux/mm.h>
 #include <linux/version.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
-#include <proc_fs.h>
-#else
 #include <linux/proc_fs.h>
-#endif
 
 #include "fhp_core.h"
 
@@ -340,6 +336,53 @@ static int fhp_read_fod_info(struct fts_core *ts_data, struct fod_info *fod)
 	return 0;
 }
 
+static int fhp_read_fod_error_info(struct fts_core *ts_data)
+{
+	int ret = 0;
+	u8 cmd = FT3681_REG_FOD_ERROR_INFO;
+	u8 val[FT3681_REG_FOD_ERROR_INFO_LEN] = { 0 };
+
+	ret = fhp_chip_read(ts_data, &cmd, 1, &val[0], FT3681_REG_FOD_ERROR_INFO_LEN);
+	if (ret < 0) {
+		hbp_err("TP_FP_ERROR_REPORT:failed to read fod data\n");
+		return ret;
+	}
+
+	hbp_info("TP_FP_ERROR_REPORT:fingerprint error type:[%*ph]\n", FT3681_REG_FOD_ERROR_INFO_LEN, val);
+	switch (val[FT3681_REG_FOD_ERROR_INFO_LEN - 1]) {
+	case FTS_FINGERPRINT_AREA_NOT_MATCH:
+		/*tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_area_not_match_count");*/
+		hbp_info("TP_FP_ERROR_REPORT:area size: 0x%x\n", val[12]);
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_AREA_NOT_MATCH\n");
+		break;
+	case FTS_ANOTHER_FINGER_ON_NON_FP_ZONE:
+		/*
+		tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "another_finger_on_non-fingerprint_zone_count");
+		*/
+		hbp_info("TP_FP_ERROR_REPORT:x:0x%x,y:0x%x\n", (val[4] << 8) + val[5], (val[6] << 8) + val[7]);
+		hbp_info("TP_FP_ERROR_REPORT:ANOTHER_FINGER_ON_NON_FP_ZONE\n");
+		break;
+	case FTS_FINGERPRINT_DOWN_BEFORE_FP_ENABLE:
+		/*
+			tp_healthinfo_report(&tcm->monitor_data, HEALTH_REPORT, "fingerprint_down_before_fp_enable_count");
+		*/
+		hbp_info("TP_FP_ERROR_REPORT:down time: %*ph\n", 4, val);
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_DOWN_BEFORE_FP_ENABLE\n");
+		break;
+	case FTS_FINGERPRINT_X_Y_NOT_MATCH:
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_X_Y_NOT_MATCH\n");
+		break;
+	case FTS_FINGERPRINT_OUT_MOVE_IN:
+		hbp_info("TP_FP_ERROR_REPORT:FINGERPRINT_OUT_MOVE_IN\n");
+		break;
+	default:
+		hbp_info("TP_FP_ERROR_REPORT:unknown fingerprint error type: 0x%x\n", val[FT3681_REG_FOD_ERROR_INFO_LEN - 1]);
+		break;
+	}
+
+	return 0;
+}
+
 static int fhp_read_aod_info(struct fts_core *ts_data, struct aod_info *aod)
 {
 	int ret = 0;
@@ -550,6 +593,14 @@ static int fhp_chip_get_gesture(void *priv, struct gesture_info *gesture)
 			gesture->Point_end.x = fod.fp_area_rate;
 			gesture->Point_end.y = 0;
 		}
+		break;
+	case GESTURE_FINGER_PRINT_ERROR:
+		ret = fhp_read_fod_error_info(fts);
+		if (ret < 0) {
+				hbp_err("failed to read fod error info\n");
+				return ret;
+		}
+		gesture->type = UnknownGesture;
 		break;
 	default:
 		gesture->type = UnknownGesture;
@@ -1117,12 +1168,24 @@ static int fts_dev_probe(struct platform_device *pdev)
 	return 0;
 
 err_exit:
+	kfree(fts);
+	kfree(fts->bus_rx_buf);
+	kfree(fts->bus_tx_buf);
+	g_fts = NULL;
 	return ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+static void fts_dev_remove(struct platform_device *spi)
+#else
 static int fts_dev_remove(struct platform_device *spi)
+#endif
 {
+	hbp_info("fts_dev_remove.\n");
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#else
 	return 0;
+#endif
 }
 
 static const struct of_device_id fts_dt_match[] = {

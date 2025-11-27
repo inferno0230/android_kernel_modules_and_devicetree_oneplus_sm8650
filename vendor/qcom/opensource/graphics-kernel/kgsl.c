@@ -44,6 +44,7 @@
 #include <mm/mm_osvelte/common.h>
 #endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 
+
 /* Instantiate tracepoints */
 #define CREATE_TRACE_POINTS
 #include "kgsl_power_trace.h"

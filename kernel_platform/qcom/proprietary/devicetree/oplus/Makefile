@@ -12,15 +12,11 @@ OPLUS_PINEAPPLE_BOARDS += waffle-22825-pineapple-overlay.dtbo\
                           caihong-23976-pineapple-overlay.dtbo\
                           caihong-23926-pineapple-overlay-T0.dtbo\
                           caihong-23976-pineapple-overlay-T0.dtbo\
-                          audi-23803-cliffs-overlay.dtbo\
-                          audi-23865-cliffs-overlay.dtbo\
-                          avalon-24211-cliffs-overlay.dtbo\
                           giulia-23851-pineapple-overlay-T0.dtbo\
                           giulia-23851-pineapple-overlay.dtbo\
                           giulia-23867-pineapple-overlay-T0.dtbo\
                           giulia-23867-pineapple-overlay-T0-EU.dtbo\
                           giulia-23867-pineapple-overlay.dtbo
-
 dtb-y += $(OPLUS_PINEAPPLE_BOARDS) $(PINEAPPLE_BASE_DTB) $(PINEAPPLE_APQ_BASE_DTB)
 
 always-y	:= $(dtb-y)

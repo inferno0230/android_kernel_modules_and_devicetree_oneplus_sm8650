@@ -39,7 +39,6 @@ static int cam_req_mgr_thread(void *data)
 
 	while(1)
 	{
-		trace_begin("cam_req_mgr_thread workq_name: %s",workq->workq_name);
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (!kthread_should_stop()) {
 			cam_req_mgr_process_workq(&(workq->work));
@@ -49,7 +48,6 @@ static int cam_req_mgr_thread(void *data)
 		if (kthread_should_stop())
 			break;
 		cam_req_mgr_process_workq(&(workq->work));
-		trace_end();
 	}
 
 	return 0;

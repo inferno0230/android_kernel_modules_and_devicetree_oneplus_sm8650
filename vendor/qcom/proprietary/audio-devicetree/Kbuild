@@ -47,6 +47,7 @@ dtbo-y += oplus/corvette-23814-audio-pineapple-overlay.dtbo
 dtbo-y += oplus/caihong-23926-audio-pineapple-overlay.dtbo
 dtbo-y += oplus/avalon-24211-audio-cliffs-overlay.dtbo
 dtbo-y += oplus/giulia-23851-audio-pineapple-overlay.dtbo
+dtbo-y += oplus/lexus-24881-audio-cliffs-overlay.dtbo
 #OPLUS_DTS_OVERLAY end
 endif
 
@@ -68,6 +69,8 @@ dtbo-y += volcano-audio.dtbo \
 		volcano6i-audio-mtp-wcd9395-moselle.dtbo \
 		volcano6i-audio-mtp-moselle-wingmate.dtbo \
 		volcano6i-audio-qrd-moselle.dtbo
+#OPLUS_DTS_OVERLAY start
+#OPLUS_DTS_OVERLAY end
 endif
 
 ifeq ($(CONFIG_ARCH_PITTI), y)

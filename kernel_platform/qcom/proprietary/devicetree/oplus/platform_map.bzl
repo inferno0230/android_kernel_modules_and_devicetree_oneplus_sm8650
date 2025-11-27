@@ -104,9 +104,6 @@ _platform_map = {
             {"name": "cliffs7.dtb"},
         ],
         "dtbo_list": [
-            {"name": "audi-23803-cliffs-overlay.dtbo"},
-            {"name": "audi-23865-cliffs-overlay.dtbo"},
-            {"name": "avalon-24211-cliffs-overlay.dtbo"},
         ],
     },
     "volcano": {

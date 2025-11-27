@@ -176,6 +176,8 @@
 					OPLUS_IC_FUNC_BUCK_GET_USB_BTB_TEMP
 					OPLUS_IC_FUNC_BUCK_GET_BATT_BTB_TEMP
 					OPLUS_IC_FUNC_BUCK_GET_TYPEC_STATE
+					OPLUS_IC_FUNC_BUCK_GET_USB_AICL_ENHANCE
+					OPLUS_IC_FUNC_BUCK_SET_AICL_POINT
 				>;
 				virqs = <
 					OPLUS_IC_VIRQ_ERR
@@ -361,6 +363,7 @@
 	pinctrl-4 = <&subboard_temp_gpio_default>;
 	pinctrl-5 = <&wrx_otg_en_active>;
 	pinctrl-6 = <&wrx_otg_en_sleep>;
+	oplus,usb_aicl_enhance;
 
 };
 
@@ -530,7 +533,7 @@
 		compatible = "oplus,monitor";
 		oplus,topic-update-interval = <60000>;
 
-		track,fast_chg_break_t_thd = <1400>;
+		track,fast_chg_break_t_thd = <2500>;
 		track,general_chg_break_t_thd = <300>;
 		track,voocphy_type = <1>;
 		track,wired_max_power = <100000>;
@@ -548,6 +551,7 @@
 		oplus,chg_into_liquid_cc_disconnect = <10>;
 		oplus,chg_into_liquid_total_time = <5000>;
 		oplus,chg_into_liquid_max_interval_time = <700>;
+		track,track_ver = <TRACK_VER_4_0>;
 	};
 
 	oplus_vooc: oplus,vooc {
@@ -588,6 +592,9 @@
 						390 420 CURR_LIMIT_7BIT_5_0A 3 1
 						410 430 CURR_LIMIT_7BIT_4_0A 4 2
 						420 440 CURR_LIMIT_7BIT_3_0A 4 3 >;
+
+		oplus,plc_strategy-data = <&buck_simple_strategy &cp_2t1_simple_strategy &cp_1t1_simple_strategy>;
+		oplus,plc_strategy-names = "default", "svooc", "vooc";
 
 		oplus_virtual_vphy: oplus,virtual_vphy {
 			compatible = "oplus,virtual_vphy";
@@ -842,6 +849,45 @@
 		power-source = <0>;
 		output-low;
 		qcom,drive-strength = <3>;
+	};
+};
+
+&soc {
+	oplus_chg_plc: oplus,plc_charge {
+		compatible = "oplus,plc_charge";
+		oplus,plc_soc = <90>;
+		oplus,plc_strategy-data = <&buck_simple_strategy>;
+		oplus,plc_strategy-names = "default";
+		oplus,plc_support = <CHG_PROTOCOL_UFCS>;
+
+		oplus_ufcs_step_strategy: oplus_ufcs_step_strategy {
+			oplus,strategy_type = <PLC_STRATEGY_STEP>;
+		};
+
+		third_ufcs_simple_strategy: third_ufcs_simple_strategy {
+			oplus,strategy_type = <PLC_STRATEGY_SIMPLE>;
+			oplus,strategy_data {
+				strategy_curr_ma = <1000 1500>;
+			};
+		};
+
+		cp_2t1_simple_strategy: cp_2t1_simple_strategy {
+			oplus,strategy_type = <PLC_STRATEGY_SIMPLE>;
+			oplus,strategy_data {
+				strategy_curr_ma = <1000 1500>;
+			};
+		};
+
+		cp_1t1_simple_strategy: cp_1t1_simple_strategy {
+			oplus,strategy_type = <PLC_STRATEGY_SIMPLE>;
+			oplus,strategy_data {
+				strategy_curr_ma = <2000 3000>;
+			};
+		};
+
+		buck_simple_strategy: buck_simple_strategy {
+			oplus,strategy_type = <PLC_STRATEGY_SIMPLE>;
+		};
 	};
 };
 
@@ -1457,6 +1503,9 @@
 		oplus,ufcs_charge_strategy_soc = <0 20 35 50 75 85 95>;
 		oplus,ufcs_charge_strategy_temp = <0 50 120 200 350 440 530>;
 		oplus,ufcs_low_curr_full_strategy_temp = <0 200 350 440>;
+
+		oplus,plc_strategy-data = <&oplus_ufcs_step_strategy &cp_2t1_simple_strategy>;
+		oplus,plc_strategy-names = "default", "third";
 
 		ufcs_charge_low_curr_full {
 			strategy_temp_little_cool = 	<950 4470 0
